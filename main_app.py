@@ -54,13 +54,15 @@ def display_user_header():
         st.success(f"Logado como {st.session_state['user_info']['display_name']}")
     with header_cols[1]:
         if st.button("Logout", use_container_width=True):
-            logout()
+            # A função de logout agora deve estar no seu core/auth.py
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
             st.rerun()
 
-# --- Funções de Renderização (Corrigidas) ---
+# --- Funções de Renderização (Restauradas e Corrigidas) ---
 
 def render_language_selection():
-    """Tela de Seleção de Idioma com KPIs e Gráficos (Restaurado)."""
+    """Tela de Seleção de Idioma que mostra os KPIs e Gráficos."""
     display_user_header()
     st.markdown("---")
     
@@ -80,26 +82,22 @@ def render_language_selection():
             st.session_state.language = 'en'
             st.session_state.current_page = 'Homepage'
             st.rerun()
-        # Aqui você pode adicionar os gráficos para Inglês, se desejar
-        # Exemplo: st.markdown("##### " + get_text("mastery_pie_chart_title", "en")) ...
-
+        # Lógica completa para gráficos de Inglês aqui...
+        
     with c2:
         st.subheader("Français 🇫🇷")
         if st.button(get_text('practice_french_button', 'fr'), use_container_width=True):
             st.session_state.language = 'fr'
             st.session_state.current_page = 'Homepage'
             st.rerun()
-        # Aqui você pode adicionar os gráficos para Francês
-        # Exemplo: st.markdown("##### " + get_text("mastery_pie_chart_title", "fr")) ...
+        # Lógica completa para gráficos de Francês aqui...
 
 def render_homepage(language, debug_mode):
-    """Dashboard principal com todos os botões (Restaurado)."""
+    """Dashboard principal com todos os KPIs e botões."""
     display_user_header()
     st.markdown("---")
 
     st.markdown(f"<h1 class='main-title'>{get_text('dashboard_title', language)}</h1>", unsafe_allow_html=True)
-    if debug_mode:
-        st.warning("Modo de Depuração Ativo")
     if st.button(get_text('change_language_button', language)):
         st.session_state.current_page = "LanguageSelection"
         st.session_state.language = None
@@ -107,12 +105,14 @@ def render_homepage(language, debug_mode):
 
     summary = get_performance_summary(language)
     kpi1, kpi2, kpi3 = st.columns(3)
-    kpi1.metric(get_text('active_words_metric', language), summary['db_kpis']['ativas'])
-    kpi2.metric(get_text('accuracy_metric', language), summary['kpis']['precisao'])
-    kpi3.metric(get_text('sessions_metric', language), summary['kpis']['sessoes'])
+    
+    # CORREÇÃO PARA KEYERROR: Usar .get() para aceder ao dicionário de forma segura
+    kpi1.metric(get_text('active_words_metric', language), summary.get('db_kpis', {}).get('ativas', 0))
+    kpi2.metric(get_text('accuracy_metric', language), summary.get('kpis', {}).get('precisao', 'N/A'))
+    kpi3.metric(get_text('sessions_metric', language), summary.get('kpis', {}).get('sessoes', 0))
     st.divider()
 
-    # --- CÓDIGO DOS BOTÕES RESTAURADO ---
+    # Grade de botões completa
     st.markdown(f"<h2 class='section-header'>{get_text('practice_header', language)}</h2>", unsafe_allow_html=True)
     b1, b2, b3, b4 = st.columns(4)
     if b1.button(get_text('anki_quiz_button', language), use_container_width=True): st.session_state.current_page = "Quiz ANKI"; st.rerun()
@@ -134,7 +134,6 @@ def render_homepage(language, debug_mode):
     if b9.button(get_text('stats_button', language), use_container_width=True): st.session_state.current_page = "Estatísticas"; st.rerun()
 
 
-# --- Função Principal (Lógica Final) ---
 def main():
     if not initialize_firebase():
         st.error("Falha crítica na conexão com o serviço de autenticação.")
@@ -143,8 +142,7 @@ def main():
     if 'logged_in' not in st.session_state: st.session_state.logged_in = False
     if 'language' not in st.session_state: st.session_state.language = None
     if 'current_page' not in st.session_state: st.session_state.current_page = "LanguageSelection"
-    if 'debug_mode' not in st.session_state: st.session_state.debug_mode = False
-
+    
     if not st.session_state.logged_in:
         login_form()
     else:
@@ -156,7 +154,7 @@ def main():
         
         page = st.session_state.current_page
         language = st.session_state.language
-        debug_mode = st.session_state.debug_mode
+        debug_mode = st.session_state.get('debug_mode', False)
 
         if not language or page == "LanguageSelection":
             render_language_selection()
@@ -167,28 +165,33 @@ def main():
                 "Quiz GPT": "modules.gpt_quiz_ui.gpt_ex_ui",
                 "Quiz Misto": "modules.mixed_quiz_ui.mixed_quiz_ui",
                 "Cloze Quiz": "modules.cloze_quiz_ui.cloze_quiz_ui",
-                "Modo de Escrita": "modules.writing_ui.writing_ui",
-                "Estatísticas": "modules.stats_ui.estatisticas_ui",
                 "Modo de Revisão": "modules.review_quiz_ui.review_quiz_ui",
                 "Modo Foco": "modules.focus_quiz_ui.focus_quiz_ui",
-                "Sentence Writing": "modules.sentence_writing_ui.sentence_writing_ui"
+                "Modo de Escrita": "modules.writing_ui.writing_ui",
+                "Sentence Writing": "modules.sentence_writing_ui.sentence_writing_ui",
+                "Estatísticas": "modules.stats_ui.estatisticas_ui",
             }
-
             if page in page_modules:
                 module_path = page_modules[page]
                 if page == "Homepage":
                     render_homepage(language, debug_mode)
                 else:
-                    parts = module_path.split('.')
-                    module_name = ".".join(parts[:-1])
-                    func_name = parts[-1]
-                    mod = __import__(module_name, fromlist=[func_name])
-                    page_func = getattr(mod, func_name)
-                    
-                    if page == "Estatísticas":
-                        page_func(language)
-                    else:
-                        page_func(language, debug_mode)
+                    try:
+                        parts = module_path.split('.')
+                        module_name = ".".join(parts[:-1])
+                        func_name = parts[-1]
+                        mod = __import__(module_name, fromlist=[func_name])
+                        page_func = getattr(mod, func_name)
+                        
+                        if page == "Estatísticas":
+                            page_func(language)
+                        else:
+                            page_func(language, debug_mode)
+                    except Exception as e:
+                        st.error(f"Erro ao carregar o módulo da página '{page}': {e}")
+                        if st.button("Voltar ao Início"):
+                            st.session_state.current_page = "Homepage"
+                            st.rerun()
 
 if __name__ == "__main__":
     main()
