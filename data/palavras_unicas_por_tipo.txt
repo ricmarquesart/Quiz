@@ -82,12 +82,6 @@ Palavra: Aberration
   - Nível: C1
   - Outra Frase: The recent glitch in the software was an aberration
 
-Palavra: Abide
-  - Tipo de Nota: BASE English
-  - Classe: Verb
-  - Nível: C1
-  - Outra Frase: He abided by the studio&#x27;s strict deadlines
-
 Palavra: Abiding
   - Tipo de Nota: BASE English
   - Classe: Adjective
