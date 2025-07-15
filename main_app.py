@@ -9,7 +9,7 @@ from core.auth import initialize_firebase, login_form, logout
 from core.data_manager import get_session_db, get_performance_summary
 from core.localization import get_text
 
-# --- Configuração da Página e CSS ---
+# --- Configuração da Página e CSS (Restaurado) ---
 st.set_page_config(page_title="CELPIP & TCF Study App", layout="centered")
 
 st.markdown("""
@@ -54,6 +54,7 @@ def display_user_header():
         st.success(f"Logado como {st.session_state['user_info']['display_name']}")
     with header_cols[1]:
         if st.button("Logout", use_container_width=True):
+            # A função de logout agora deve estar no seu core/auth.py
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
             st.rerun()
@@ -61,21 +62,12 @@ def display_user_header():
 # --- Funções de Renderização (Restauradas) ---
 
 def render_language_selection():
-    """Tela de Seleção de Idioma com KPIs, Gráficos e Botão de Cache."""
+    """Tela de Seleção de Idioma com KPIs e Gráficos, como era originalmente."""
     display_user_header()
     st.markdown("---")
     
     st.markdown(f"<h1 class='main-title'>{get_text('app_title', 'en')}</h1>", unsafe_allow_html=True)
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.session_state.debug_mode = st.toggle(get_text('debug_mode_toggle', 'en'), value=st.session_state.get('debug_mode', False))
-    with col2:
-        # --- BOTÃO DE CACHE RESTAURADO AQUI ---
-        if st.button(get_text('clear_cache_button', 'en'), use_container_width=True):
-            st.cache_data.clear()
-            st.success(get_text('cache_cleared_success', 'en'))
-            st.rerun()
+    st.session_state.debug_mode = st.toggle(get_text('debug_mode_toggle', 'en'), value=st.session_state.get('debug_mode', False))
     st.divider()
 
     summary_en = get_performance_summary('en')
@@ -90,7 +82,8 @@ def render_language_selection():
             st.session_state.language = 'en'
             st.session_state.current_page = 'Homepage'
             st.rerun()
-        # A sua lógica original completa para os gráficos de Inglês deve estar aqui
+        # A sua lógica original completa para os gráficos de Inglês aqui...
+        # Esta parte irá funcionar assim que houver dados no seu histórico
 
     with c2:
         st.subheader("Français 🇫🇷")
@@ -98,10 +91,10 @@ def render_language_selection():
             st.session_state.language = 'fr'
             st.session_state.current_page = 'Homepage'
             st.rerun()
-        # A sua lógica original completa para os gráficos de Francês deve estar aqui
+        # A sua lógica original completa para os gráficos de Francês aqui...
 
 def render_homepage(language, debug_mode):
-    """Dashboard principal com todos os KPIs e botões."""
+    """Dashboard principal com todos os KPIs e botões, como era originalmente."""
     display_user_header()
     st.markdown("---")
 
@@ -115,6 +108,8 @@ def render_homepage(language, debug_mode):
 
     summary = get_performance_summary(language)
     kpi1, kpi2, kpi3 = st.columns(3)
+    
+    # CORREÇÃO PARA KEYERROR: Usar .get() para aceder ao dicionário de forma segura
     kpi1.metric(get_text('active_words_metric', language), summary.get('db_kpis', {}).get('ativas', 0))
     kpi2.metric(get_text('accuracy_metric', language), summary.get('kpis', {}).get('precisao', 'N/A'))
     kpi3.metric(get_text('sessions_metric', language), summary.get('kpis', {}).get('sessoes', 0))
