@@ -24,8 +24,12 @@ TIPOS_EXERCICIO_ANKI = {
     "MCQ Significado": "gerar_mcq_significado", "MCQ Tradução Inglês": "gerar_mcq_traducao_ingles",
     "MCQ Sinônimo": "gerar_mcq_sinonimo", "Fill": "gerar_fill_gap", "Reading": "gerar_reading_comprehension"
 }
+TIPOS_EXERCICIO_GPT = [
+    "sinonimo_mcq", "antonym_mcq", "definition_mcq", "context_mcq",
+    "fill_in_the_blank_1", "fill_in_the_blank_2", "cloze_text"
+]
 
-# --- Funções de Interação com Firestore ---
+# --- Interação com Firestore (Completo) ---
 def get_firestore_db():
     return firestore.client()
 
@@ -42,14 +46,19 @@ def get_user_data(language):
         doc = doc_ref.get()
         if doc.exists:
             return doc.to_dict()
-    return {'vocab_database': [], 'historico': {}, 'writing_log': [], 'sentence_log': []}
+    return {
+        'vocab_database': [],
+        'historico': {"quiz": [], "gpt_quiz": [], "mixed_quiz": [], "review_quiz": [], "focus_quiz": [], "cloze_quiz": []},
+        'writing_log': [],
+        'sentence_log': []
+    }
 
 def save_user_data(data_dict, language):
     doc_ref = get_user_doc_ref(language)
     if doc_ref:
         doc_ref.set(data_dict)
 
-# --- Funções "Wrapper" de Dados (Completo) ---
+# --- Funções "Wrapper" de Dados (Completo e Restaurado) ---
 def get_vocab_db_list(language):
     return get_user_data(language).get('vocab_database', [])
 
@@ -68,7 +77,7 @@ def save_history(historico, language):
 
 def clear_history(language):
     full_data = get_user_data(language)
-    full_data['historico'] = {}
+    full_data['historico'] = {k: [] for k in full_data.get('historico', {}).keys()}
     save_user_data(full_data, language)
     st.success("Histórico de quizzes limpo com sucesso!")
 
@@ -132,9 +141,13 @@ def delete_sentence_log_entry(word_key, language):
     full_data['sentence_log'] = log
     save_user_data(full_data, language)
 
+
 # --- Carregamento de Arquivos e Sincronização ---
 @st.cache_data
 def carregar_arquivos_base(language):
+    """
+    Baixa o conteúdo do GitHub e DEPOIS filtra e processa para o idioma correto.
+    """
     @st.cache_data
     def baixar_conteudo(filename):
         url = BASE_URL + filename
@@ -142,22 +155,27 @@ def carregar_arquivos_base(language):
             response = requests.get(url)
             response.raise_for_status()
             return response.text
-        except requests.exceptions.RequestException:
+        except requests.exceptions.RequestException as e:
+            st.error(f"Falha ao baixar '{filename}' do GitHub: {e}")
             return None
 
     def processar_e_filtrar_anki(content, lang):
         flashcards_filtrados = []
         if not content: return flashcards_filtrados
+        
         lang_map = {'en': 'English', 'fr': 'Francais'}
         target_lang_str = lang_map.get(lang)
         if not target_lang_str: return flashcards_filtrados
+
         blocos = re.split(r'\n\s*\n', content.strip())
         for bloco in blocos:
             if not bloco.strip(): continue
             linhas = [linha.strip() for linha in bloco.strip().split('\n')]
             header = linhas[0]
+
             if target_lang_str not in header:
                 continue
+
             card = {'source': 'ANKI', 'idioma': lang}
             match = re.match(r"(.+?)\s*\((.+?)\s*\|\s*(.+?)\s*\|\s*(.+?)\):", header)
             if match:
@@ -166,12 +184,14 @@ def carregar_arquivos_base(language):
                 card['cefr'] = match.group(3).strip()
             else:
                 continue
+
             for linha in linhas[1:]:
                 if ': ' in linha:
                     linha_limpa = re.sub(r'\\s*', '', linha).strip()
                     key, value = linha_limpa.split(': ', 1)
                     key = key.replace('- ', '').strip().lower().replace(' ', '_')
                     card[key] = value.strip()
+            
             flashcards_filtrados.append(card)
         return flashcards_filtrados
 
@@ -183,6 +203,7 @@ def carregar_arquivos_base(language):
             partes = linha_limpa.strip().split(';')
             if not partes or len(partes) < 7 or partes[0] != lang:
                 continue
+            
             try:
                 exercicio = {
                     'idioma': partes[0], 'tipo': partes[1], 'frase': partes[2],
@@ -194,12 +215,32 @@ def carregar_arquivos_base(language):
             except IndexError:
                 continue
         return exercicios_filtrados
-
+    
     conteudo_anki = baixar_conteudo(CARTOES_FILE_BASE)
     conteudo_gpt = baixar_conteudo(GPT_FILE_BASE)
+    
     flashcards = processar_e_filtrar_anki(conteudo_anki, language)
     gpt_exercicios = processar_e_filtrar_gpt(conteudo_gpt, language)
+    
     return flashcards, gpt_exercicios
+
+
+@st.cache_data
+def load_sentence_data(language):
+    url = BASE_URL + SENTENCE_WORDS_FILE
+    words_data = {}
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        col_names = ['Palavra', 'Classe', 'Nível', 'Frase', 'idioma']
+        df = pd.read_csv(StringIO(response.text), sep=';', header=None, names=col_names, on_bad_lines='skip')
+        df = df[df['idioma'] == language]
+        for _, row in df.iterrows():
+            key = f"{row['Palavra']}_{row['Classe']}_{row['Nível']}"
+            words_data[key] = { 'palavra_base': row['Palavra'], 'Classe': row['Classe'], 'Nível': row['Nível'], 'Outra Frase': row['Frase'] }
+    except Exception as e:
+        st.error(f"Erro ao ler arquivo de frases do GitHub: {e}")
+    return words_data
 
 def sync_database(language):
     flashcards, gpt_exercicios = carregar_arquivos_base(language)

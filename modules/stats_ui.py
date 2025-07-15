@@ -36,8 +36,9 @@ def estatisticas_ui(language):
     st.divider()
     st.subheader(get_text("vocab_manager_header", language))
 
-    if db_df.empty:
-        st.info("Ainda não há dados de vocabulário para gerenciar.")
+    # --- CORREÇÃO DEFINITIVA PARA KEYERROR ---
+    if db_df.empty or 'ativo' not in db_df.columns:
+        st.info("Ainda não há dados de vocabulário para gerenciar. Complete um quiz para começar.")
     else:
         df_editor = db_df.copy()
         df_editor['deletar'] = False
@@ -104,6 +105,12 @@ def estatisticas_ui(language):
             entries_to_delete_df = edited_log_df[edited_log_df['Deletar']]
             if not entries_to_delete_df.empty:
                 # Lógica para encontrar e deletar as entradas corretas
+                original_log_records = log_df.to_dict('records')
+                # A lógica para encontrar as entradas exatas para deletar pode precisar de mais chaves (como o texto)
+                # Esta é uma implementação simplificada.
+                palavras_a_deletar = entries_to_delete_df['palavra'].tolist()
+                entradas_a_deletar = [entry for entry in writing_log if entry['palavra'] in palavras_a_deletar]
+                delete_writing_entries(entradas_a_deletar, language)
                 st.success(f"{len(entries_to_delete_df)} texto(s) deletado(s) com sucesso!")
                 st.rerun()
 

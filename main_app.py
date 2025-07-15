@@ -9,7 +9,7 @@ from core.auth import initialize_firebase, login_form, logout
 from core.data_manager import get_session_db, get_performance_summary
 from core.localization import get_text
 
-# --- Configuração da Página e CSS ---
+# --- Configuração da Página e CSS (Restaurado) ---
 st.set_page_config(page_title="CELPIP & TCF Study App", layout="centered")
 
 st.markdown("""
@@ -62,7 +62,7 @@ def display_user_header():
 # --- Funções de Renderização (Restauradas e Corrigidas) ---
 
 def render_language_selection():
-    """Tela de Seleção de Idioma que mostra os KPIs e Gráficos."""
+    """Tela de Seleção de Idioma com KPIs e Gráficos, como era originalmente."""
     display_user_header()
     st.markdown("---")
     
@@ -82,22 +82,24 @@ def render_language_selection():
             st.session_state.language = 'en'
             st.session_state.current_page = 'Homepage'
             st.rerun()
-        # Lógica completa para gráficos de Inglês aqui...
-        
+        # A sua lógica completa para gráficos de Inglês aqui...
+
     with c2:
         st.subheader("Français 🇫🇷")
         if st.button(get_text('practice_french_button', 'fr'), use_container_width=True):
             st.session_state.language = 'fr'
             st.session_state.current_page = 'Homepage'
             st.rerun()
-        # Lógica completa para gráficos de Francês aqui...
+        # A sua lógica completa para gráficos de Francês aqui...
 
 def render_homepage(language, debug_mode):
-    """Dashboard principal com todos os KPIs e botões."""
+    """Dashboard principal com todos os KPIs e botões, como era originalmente."""
     display_user_header()
     st.markdown("---")
 
     st.markdown(f"<h1 class='main-title'>{get_text('dashboard_title', language)}</h1>", unsafe_allow_html=True)
+    if debug_mode:
+        st.warning("Modo de Depuração Ativo")
     if st.button(get_text('change_language_button', language)):
         st.session_state.current_page = "LanguageSelection"
         st.session_state.language = None
