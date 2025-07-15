@@ -9,8 +9,8 @@ import random
 import requests # Usado para baixar os arquivos do GitHub
 from firebase_admin import firestore
 
-# --- Constantes com a nova estrutura do GitHub ---
-GITHUB_USER = "ricmarquesx"
+# --- Constantes com a nova estrutura do GitHub (CORRIGIDO) ---
+GITHUB_USER = "ricmarquesart" # CORRIGIDO
 GITHUB_REPO = "Quiz"
 BRANCH = "main" # Geralmente 'main' ou 'master'
 
@@ -138,8 +138,7 @@ def delete_sentence_log_entry(word_key, language):
     full_data['sentence_log'] = log
     save_user_data(full_data, language)
 
-
-# --- NOVA FUNÇÃO DE CARREGAMENTO DO GITHUB ---
+# --- Carregamento de Arquivos do GitHub ---
 @st.cache_data
 def carregar_arquivos_base():
     """Baixa e processa os arquivos de base do GitHub."""
@@ -147,14 +146,13 @@ def carregar_arquivos_base():
         url = BASE_URL + filename
         try:
             response = requests.get(url)
-            response.raise_for_status() # Lança um erro se o download falhar (ex: 404)
+            response.raise_for_status()
             content = response.text
             return process_func(content)
         except requests.exceptions.RequestException as e:
             st.error(f"Falha ao baixar '{filename}' do GitHub: {e}")
             return []
 
-    # Você precisa colar sua lógica de parsing aqui dentro
     def processar_anki(content):
         # COLE AQUI SUA LÓGICA PARA PROCESSAR O CONTEÚDO DO cartoes_validacao.txt
         return []
@@ -175,16 +173,13 @@ def carregar_arquivos_base():
 
 @st.cache_data
 def load_sentence_data(language):
-    # Esta função agora também deve ler do GitHub
     url = BASE_URL + SENTENCE_WORDS_FILE
     words_data = {}
     try:
+        from io import StringIO
         response = requests.get(url)
         response.raise_for_status()
-        # Assumindo que o arquivo é CSV, podemos usar o pandas para ler diretamente da URL
-        from io import StringIO
         df = pd.read_csv(StringIO(response.text), sep=';')
-        # Lógica para filtrar por idioma, se a coluna 'idioma' existir no arquivo
         if 'idioma' in df.columns:
             df = df[df['idioma'] == language]
         for _, row in df.iterrows():
@@ -194,14 +189,13 @@ def load_sentence_data(language):
         st.error(f"Erro ao ler arquivo de frases do GitHub: {e}")
     return words_data
 
-# --- Sincronização e Gerenciamento de BD (Ajustado) ---
+# --- Sincronização e Gerenciamento de BD ---
 def sync_database(language):
     flashcards_raw, gpt_raw = carregar_arquivos_base()
     
-    # IMPORTANTE: Filtre os dados aqui para o idioma correto, já que agora lemos tudo de uma vez
-    # Esta lógica depende de como você diferencia os idiomas nos seus .txt
-    flashcards = [f for f in flashcards_raw] # Adapte esta linha
-    gpt_exercicios = [g for g in gpt_raw] # Adapte esta linha
+    # IMPORTANTE: Adapte esta lógica para filtrar os dados por idioma
+    flashcards = [f for f in flashcards_raw]
+    gpt_exercicios = [g for g in gpt_raw]
 
     db_list = get_vocab_db_list(language)
     db_dict = {item['palavra']: item for item in db_list}
