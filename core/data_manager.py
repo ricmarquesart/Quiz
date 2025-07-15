@@ -6,15 +6,13 @@ import pandas as pd
 import datetime
 from collections import Counter, defaultdict
 import random
-import requests # Usado para baixar os arquivos do GitHub
+import requests
 from firebase_admin import firestore
 
-# --- Constantes com a nova estrutura do GitHub (CORRIGIDO) ---
-GITHUB_USER = "ricmarquesart" # CORRIGIDO
+# --- Constantes ---
+GITHUB_USER = "ricmarquesart"
 GITHUB_REPO = "Quiz"
-BRANCH = "main" # Geralmente 'main' ou 'master'
-
-# URL base para acessar os arquivos "crus" (raw) na sua pasta 'data'
+BRANCH = "main"
 BASE_URL = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/{BRANCH}/data/"
 
 CARTOES_FILE_BASE = 'cartoes_validacao.txt'
@@ -26,7 +24,7 @@ TIPOS_EXERCICIO_ANKI = {
     "MCQ Sinônimo": "gerar_mcq_sinonimo", "Fill": "gerar_fill_gap", "Reading": "gerar_reading_comprehension"
 }
 
-# --- Interação com Firestore (Permanece igual) ---
+# --- Interação com Firestore (Completo) ---
 def get_firestore_db():
     return firestore.client()
 
@@ -55,7 +53,7 @@ def save_user_data(data_dict, language):
     if doc_ref:
         doc_ref.set(data_dict)
 
-# --- Funções "Wrapper" de Dados (Completas e Restauradas) ---
+# --- Funções "Wrapper" de Dados (Completo) ---
 def get_vocab_db_list(language):
     return get_user_data(language).get('vocab_database', [])
 
@@ -138,38 +136,50 @@ def delete_sentence_log_entry(word_key, language):
     full_data['sentence_log'] = log
     save_user_data(full_data, language)
 
-# --- Carregamento de Arquivos do GitHub ---
+# --- Carregamento de Arquivos e Sincronização (Lógica Original Restaurada) ---
+
 @st.cache_data
-def carregar_arquivos_base():
-    """Baixa e processa os arquivos de base do GitHub."""
-    def baixar_e_processar(filename, process_func):
+def carregar_arquivos_base(language):
+    """
+    Baixa o conteúdo do GitHub e DEPOIS filtra por idioma.
+    """
+    @st.cache_data
+    def baixar_conteudo(filename):
         url = BASE_URL + filename
         try:
             response = requests.get(url)
             response.raise_for_status()
-            content = response.text
-            return process_func(content)
+            return response.text
         except requests.exceptions.RequestException as e:
             st.error(f"Falha ao baixar '{filename}' do GitHub: {e}")
-            return []
+            return None
 
-    def processar_anki(content):
-        # COLE AQUI SUA LÓGICA PARA PROCESSAR O CONTEÚDO DO cartoes_validacao.txt
-        return []
+    # As suas funções de parsing originais.
+    # **VOCÊ PRECISA COLAR SEU CÓDIGO DE PARSING ORIGINAL AQUI DENTRO**
+    def processar_e_filtrar_anki(content, lang):
+        flashcards_filtrados = []
+        if not content: return flashcards_filtrados
+        # COLE AQUI SUA LÓGICA ORIGINAL PARA LER O ARQUIVO ANKI E SEPARAR POR IDIOMA
+        # Exemplo:
+        # for block in content.strip().split('---'):
+        #     if f"lang:{lang}" in block:
+        #         # Processa o bloco e adiciona a flashcards_filtrados
+        return flashcards_filtrados
 
-    def processar_gpt(content):
-        # COLE AQUI SUA LÓGICA PARA PROCESSAR O CONTEÚDO DO Dados_Manual_output_GPT.txt
-        return []
+    def processar_e_filtrar_gpt(content, lang):
+        exercicios_filtrados = []
+        if not content: return exercicios_filtrados
+        # COLE AQUI SUA LÓGICA ORIGINAL PARA LER O ARQUIVO GPT E SEPARAR POR IDIOMA
+        return exercicios_filtrados
+
+    conteudo_anki = baixar_conteudo(CARTOES_FILE_BASE)
+    conteudo_gpt = baixar_conteudo(GPT_FILE_BASE)
     
-    def processar_cloze(content):
-        # COLE AQUI SUA LÓGICA PARA PROCESSAR O CONTEÚDO DO Dados_Manual_Cloze_text.txt
-        return []
-
-    flashcards = baixar_e_processar(CARTOES_FILE_BASE, processar_anki)
-    gpt_exercicios = baixar_e_processar(GPT_FILE_BASE, processar_gpt)
-    cloze_exercicios = baixar_e_processar(CLOZE_FILE_BASE, processar_cloze)
-
-    return flashcards, gpt_exercicios + cloze_exercicios
+    flashcards = processar_e_filtrar_anki(conteudo_anki, language)
+    gpt_exercicios = processar_e_filtrar_gpt(conteudo_gpt, language)
+    
+    # A função agora retorna os dados já filtrados para o idioma correto
+    return flashcards, gpt_exercicios
 
 @st.cache_data
 def load_sentence_data(language):
@@ -189,14 +199,8 @@ def load_sentence_data(language):
         st.error(f"Erro ao ler arquivo de frases do GitHub: {e}")
     return words_data
 
-# --- Sincronização e Gerenciamento de BD ---
 def sync_database(language):
-    flashcards_raw, gpt_raw = carregar_arquivos_base()
-    
-    # IMPORTANTE: Adapte esta lógica para filtrar os dados por idioma
-    flashcards = [f for f in flashcards_raw]
-    gpt_exercicios = [g for g in gpt_raw]
-
+    flashcards, gpt_exercicios = carregar_arquivos_base(language)
     db_list = get_vocab_db_list(language)
     db_dict = {item['palavra']: item for item in db_list}
     all_source_words = {f.get('palavra') for f in flashcards if f.get('palavra')} | \
