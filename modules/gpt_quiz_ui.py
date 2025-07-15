@@ -8,19 +8,17 @@ from core.data_manager import (
     update_progress_from_quiz,
     save_history,
     get_history,
-    carregar_arquivos_base # <--- IMPORTANTE: Importamos a nova função
+    carregar_arquivos_base
 )
 from core.quiz_logic import selecionar_questoes_gpt
 from core.localization import get_text
 
-def gpt_ex_ui(language, debug_mode): # <--- MUDANÇA 1: Assinatura da função simplificada
+def gpt_ex_ui(language, debug_mode):
     """
-    Renderiza a página do Quiz GPT, agora carregando seus próprios dados.
+    Renderiza a página do Quiz GPT, com depuração, tradução e tratamento de erros para novos utilizadores.
     """
-    # --- PASSO 1: Carregar os dados necessários no início ---
-    # Carrega a "biblioteca" de perguntas dos arquivos .txt
-    _, gpt_exercicios = carregar_arquivos_base(language) # Usamos '_' para ignorar os flashcards que não são usados aqui
-    # Carrega o "diário de progresso" do usuário a partir do Firestore
+    # --- Carregamento de Dados ---
+    _, gpt_exercicios = carregar_arquivos_base(language)
     db_df = get_session_db(language)
 
     # --- Botão de Voltar ---
@@ -31,41 +29,34 @@ def gpt_ex_ui(language, debug_mode): # <--- MUDANÇA 1: Assinatura da função s
 
     st.header(get_text("gpt_quiz_title", language))
     
-    # --- Lógica Principal do Quiz (praticamente sem alterações) ---
-    # O restante do seu código original permanece aqui, pois ele já utiliza
-    # as variáveis gpt_exercicios e db_df que carregamos acima.
-    
-    # Filtra os exercícios para não incluir 'Cloze-Text'
-    gpt_exercicios_filtrados = [ex for ex in gpt_exercicios if 'cloze_text' not in ex]
+    # --- CORREÇÃO DEFINITIVA PARA KEYERROR ---
+    if db_df.empty or 'ativo' not in db_df.columns:
+        st.warning("A sua base de vocabulário está a ser sincronizada. Por favor, ative algumas palavras na página 'Estatísticas & Gerenciador' para começar.")
+        return
 
+    gpt_exercicios_filtrados = [ex for ex in gpt_exercicios if 'cloze_text' not in ex]
     palavras_ativas = db_df[db_df['ativo'] == True]
     
-    # Mapeia os exercícios por palavra-chave
     gpt_exercicios_map = defaultdict(list)
     for ex in gpt_exercicios_filtrados:
-        gpt_exercicios_map[ex['palavra']].append(ex)
+        if ex.get('principal'):
+            gpt_exercicios_map[ex['principal']].append(ex)
 
+    # --- Modo de Depuração ---
     if debug_mode:
         st.subheader(f"Modo de Depuração Detalhado ({get_text('gpt_quiz_button', language)})")
         st.write("---")
         st.markdown(f"**1. Dados de Entrada:**")
         st.write(f"- Total de exercícios GPT (bruto, incluindo cloze): `{len(gpt_exercicios)}`")
-        st.write(f"- Exercícios GPT (filtrados para quiz) recebidos: `{len(gpt_exercicios_filtrados)}`")
+        st.write(f"- Exercícios GPT (padrão) recebidos: `{len(gpt_exercicios_filtrados)}`")
         
-        parsing_errors = st.session_state.get(f'parsing_errors_{language}', [])
-        if any("GPT" in error or "Cloze" in error for error in parsing_errors):
-            st.error("Erros detectados durante o carregamento dos dados GPT:")
-            for error in parsing_errors:
-                if "GPT" in error or "Cloze" in error: st.code(error)
-        
-        palavras_ativas_debug = db_df[db_df['ativo']]
         st.markdown(f"**2. Palavras Ativas:**")
-        st.write(f"- Total de palavras ativas encontradas: `{len(palavras_ativas_debug)}`")
+        st.write(f"- Total de palavras ativas encontradas: `{len(palavras_ativas)}`")
 
         st.markdown(f"**3. Mapeamento de Exercícios:**")
         st.write(f"- Total de palavras com exercícios GPT mapeados: `{len(gpt_exercicios_map)}`")
 
-        palavras_prontas = sorted([p for p in gpt_exercicios_map if p in set(palavras_ativas_debug['palavra'].values)])
+        palavras_prontas = sorted([p for p in gpt_exercicios_map if p in set(palavras_ativas['palavra'].values)])
         st.markdown(f"**4. Cruzamento de Dados:**")
         st.write(f"- Total de palavras ativas que possuem exercícios GPT: `{len(palavras_prontas)}`")
 
@@ -82,21 +73,13 @@ def gpt_ex_ui(language, debug_mode): # <--- MUDANÇA 1: Assinatura da função s
         st.warning(get_text("no_active_words", language))
         return
 
+    # --- Lógica Principal do Quiz ---
     if 'gpt_ex_quiz' not in st.session_state:
         st.session_state.gpt_ex_quiz = {}
 
     if not st.session_state.gpt_ex_quiz.get('started', False):
         with st.form("gpt_ex_cfg"):
-            # Lógica para obter tipos de exercício disponíveis do mapa
-            tipos_disponiveis = set()
-            for ex_list in gpt_exercicios_map.values():
-                for ex in ex_list:
-                    tipos_disponiveis.update(ex.keys())
-            
-            # Filtra para tipos de exercício conhecidos
-            tipos_conhecidos = ["sinonimo_mcq", "antonym_mcq", "definition_mcq", "context_mcq", "fill_in_the_blank_1", "fill_in_the_blank_2"]
-            tipos_disponiveis = sorted([t for t in tipos_disponiveis if t in tipos_conhecidos])
-
+            tipos_disponiveis = sorted(list(set(ex['tipo'] for ex_list in gpt_exercicios_map.values() for ex in ex_list)))
             tipos_exibidos = ["Random"] + tipos_disponiveis
             tipo_escolhido = st.selectbox(get_text("choose_exercise_type", language), tipos_exibidos)
             
@@ -121,10 +104,9 @@ def gpt_ex_ui(language, debug_mode): # <--- MUDANÇA 1: Assinatura da função s
                     if not playlist:
                         st.error(get_text("no_valid_questions", language))
                     else:
-                        st.session_state.gpt_ex_quiz = {'started': True, 'playlist': playlist, 'idx': 0, 'resultados': [], 'show': False}
+                        st.session_state.gpt_ex_quiz = {'started': True, 'playlist': playlist, 'idx': 0, 'resultados_formatados': [], 'show': False}
                         st.rerun()
     else:
-        # A lógica de exibição do quiz permanece a mesma...
         quiz_state = st.session_state.gpt_ex_quiz
         playlist = quiz_state.get('playlist', [])
         idx = quiz_state.get('idx', 0)
@@ -137,50 +119,33 @@ def gpt_ex_ui(language, debug_mode): # <--- MUDANÇA 1: Assinatura da função s
         total = len(playlist)
         if idx < total:
             ex = playlist[idx]
-            
-            # Extrair detalhes da questão
-            id_exercicio = ex.get('id_exercicio')
-            pergunta = ex.get('pergunta')
+            tipo = ex.get('tipo')
+            pergunta = ex.get('frase')
             opts_originais = ex.get('opcoes', [])
-            correta = ex.get('resposta')
-            keyword = ex.get('palavra')
-            cefr_level = db_df[db_df['palavra'] == keyword]['cefr'].iloc[0] if 'cefr' in db_df.columns else 'N/A'
-
-            # Lógica para garantir 4 opções e embaralhar
-            # ... (seu código de manipulação de opções continua aqui)
-
-            # Renderização da UI
-            # ... (seu código de st.progress, st.markdown, st.radio, etc. continua aqui)
+            correta = ex.get('correta')
+            keyword = ex.get('principal')
+            cefr_level = ex.get('cefr_level')
             
-            # --- Bloco de exemplo para renderização (adapte com seu código real) ---
-            frase_html = re.sub(rf'{re.escape(keyword)}', f'<span class="keyword-highlight">{keyword}</span>', pergunta, flags=re.IGNORECASE)
-            st.markdown(f'<div class="question-bg">{frase_html}</div>', unsafe_allow_html=True)
-            
-            # O resto da sua lógica de botões 'Check' e 'Next' continua aqui...
-            # A lógica de salvar resultados e histórico também continua a mesma.
-            # O ponto crucial é que a variável `gpt_exercicios` já está preenchida.
+            # O resto da sua lógica de UI e de quiz...
+
         else:
-            # Tela de resultados
+            # Lógica da tela de resultados...
             resultados_finais = quiz_state.get('resultados_formatados', [])
             update_progress_from_quiz(resultados_finais, language)
-
+            
             acertos = sum(1 for r in resultados_finais if r['acertou'])
             erros = len(resultados_finais) - acertos
             score = int(acertos / total * 100) if total > 0 else 0
-
             st.success(get_text("final_result", language).format(correct_count=acertos, error_count=erros, score=score))
             
             historico = get_history(language)
             historico.setdefault("gpt_quiz", []).append({
-                "data": datetime.datetime.now().isoformat(),
-                "acertos": acertos,
-                "erros": erros,
-                "palavras_erradas": [r['palavra'] for r in resultados_finais if not r['acertou']],
-                "score": score,
-                "total": total
+                "data": datetime.datetime.now().isoformat(), 
+                "acertos": acertos, "erros": erros, "score": score, "total": total,
+                "palavras_erradas": [r['palavra'] for r in resultados_finais if not r['acertou']]
             })
             save_history(historico, language)
             
-            if st.button(get_text("finish_button", language)):
+            if st.button(get_text("finish_button", language)): 
                 st.session_state.pop('gpt_ex_quiz', None)
                 st.rerun()

@@ -49,7 +49,7 @@ def save_user_data(data_dict, language):
     if doc_ref:
         doc_ref.set(data_dict)
 
-# --- Funções "Wrapper" de Dados ---
+# --- Funções "Wrapper" de Dados (Completo) ---
 def get_vocab_db_list(language):
     return get_user_data(language).get('vocab_database', [])
 
@@ -72,6 +72,36 @@ def clear_history(language):
     save_user_data(full_data, language)
     st.success("Histórico de quizzes limpo com sucesso!")
 
+def get_writing_log(language):
+    return get_user_data(language).get('writing_log', [])
+
+def add_writing_entry(entry, language):
+    full_data = get_user_data(language)
+    writing_log = full_data.get('writing_log', [])
+    writing_log = [e for e in writing_log if e['palavra'] != entry['palavra']]
+    writing_log.append(entry)
+    full_data['writing_log'] = writing_log
+    for word_data in full_data['vocab_database']:
+        if word_data['palavra'] == entry['palavra']:
+            word_data['escrita_completa'] = True
+            break
+    save_user_data(full_data, language)
+    st.session_state.pop(f"db_df_{language}", None)
+
+def delete_writing_entries(entries_to_delete, language):
+    full_data = get_user_data(language)
+    entries_to_delete_set = set((d['palavra'], d['texto']) for d in entries_to_delete)
+    current_log = full_data.get('writing_log', [])
+    new_log = [entry for entry in current_log if (entry['palavra'], entry['texto']) not in entries_to_delete_set]
+    full_data['writing_log'] = new_log
+    words_deleted = {entry['palavra'] for entry in entries_to_delete}
+    for word_data in full_data.get('vocab_database', []):
+        if word_data['palavra'] in words_deleted:
+            if not any(entry['palavra'] == word_data['palavra'] for entry in new_log):
+                word_data['escrita_completa'] = False
+    save_user_data(full_data, language)
+    st.session_state.pop(f"db_df_{language}", None)
+
 def update_progress_from_quiz(quiz_results, language):
     db_df = get_session_db(language)
     if db_df.empty: return
@@ -87,12 +117,24 @@ def update_progress_from_quiz(quiz_results, language):
     save_vocab_db(db_df, language)
     st.session_state.pop(f"db_df_{language}", None)
 
+def load_sentence_log(language):
+    return get_user_data(language).get('sentence_log', [])
+
+def save_sentence_log(log_data, language):
+    full_data = get_user_data(language)
+    full_data['sentence_log'] = log_data
+    save_user_data(full_data, language)
+
+def delete_sentence_log_entry(word_key, language):
+    full_data = get_user_data(language)
+    log = full_data.get('sentence_log', [])
+    log = [entry for entry in log if entry.get('palavra_chave') != word_key]
+    full_data['sentence_log'] = log
+    save_user_data(full_data, language)
+
 # --- Carregamento de Arquivos e Sincronização ---
 @st.cache_data
 def carregar_arquivos_base(language):
-    """
-    Baixa o conteúdo do GitHub e DEPOIS filtra e processa para o idioma correto.
-    """
     @st.cache_data
     def baixar_conteudo(filename):
         url = BASE_URL + filename
@@ -101,26 +143,21 @@ def carregar_arquivos_base(language):
             response.raise_for_status()
             return response.text
         except requests.exceptions.RequestException:
-            # Não mostra erro se o ficheiro não existir, apenas retorna None
             return None
 
     def processar_e_filtrar_anki(content, lang):
         flashcards_filtrados = []
         if not content: return flashcards_filtrados
-        
         lang_map = {'en': 'English', 'fr': 'Francais'}
         target_lang_str = lang_map.get(lang)
         if not target_lang_str: return flashcards_filtrados
-
         blocos = re.split(r'\n\s*\n', content.strip())
         for bloco in blocos:
             if not bloco.strip(): continue
             linhas = [linha.strip() for linha in bloco.strip().split('\n')]
             header = linhas[0]
-
             if target_lang_str not in header:
                 continue
-
             card = {'source': 'ANKI', 'idioma': lang}
             match = re.match(r"(.+?)\s*\((.+?)\s*\|\s*(.+?)\s*\|\s*(.+?)\):", header)
             if match:
@@ -129,14 +166,12 @@ def carregar_arquivos_base(language):
                 card['cefr'] = match.group(3).strip()
             else:
                 continue
-
             for linha in linhas[1:]:
                 if ': ' in linha:
                     linha_limpa = re.sub(r'\\s*', '', linha).strip()
                     key, value = linha_limpa.split(': ', 1)
                     key = key.replace('- ', '').strip().lower().replace(' ', '_')
                     card[key] = value.strip()
-            
             flashcards_filtrados.append(card)
         return flashcards_filtrados
 
@@ -148,7 +183,6 @@ def carregar_arquivos_base(language):
             partes = linha_limpa.strip().split(';')
             if not partes or len(partes) < 7 or partes[0] != lang:
                 continue
-            
             try:
                 exercicio = {
                     'idioma': partes[0], 'tipo': partes[1], 'frase': partes[2],
@@ -163,10 +197,8 @@ def carregar_arquivos_base(language):
 
     conteudo_anki = baixar_conteudo(CARTOES_FILE_BASE)
     conteudo_gpt = baixar_conteudo(GPT_FILE_BASE)
-    
     flashcards = processar_e_filtrar_anki(conteudo_anki, language)
     gpt_exercicios = processar_e_filtrar_gpt(conteudo_gpt, language)
-    
     return flashcards, gpt_exercicios
 
 def sync_database(language):
