@@ -16,7 +16,7 @@ from core.localization import get_text
 
 def mixed_quiz_ui(language, debug_mode):
     """
-    Renders the Mixed Quiz page, now with robust data handling for new users.
+    Renderiza a página do Quiz Misto, com tratamento de erros para novos utilizadores.
     """
     # --- Carregamento de Dados ---
     flashcards, gpt_exercicios = carregar_arquivos_base(language)
@@ -32,12 +32,12 @@ def mixed_quiz_ui(language, debug_mode):
 
     # --- CORREÇÃO DEFINITIVA PARA KEYERROR ---
     if db_df.empty or 'ativo' not in db_df.columns:
-        st.warning("Vocabulary data is not available. Please go to 'Stats & Manager' to sync your data.")
+        st.warning("A sua base de vocabulário está a ser sincronizada. Por favor, ative algumas palavras na página 'Estatísticas & Gerenciador' para começar.")
         return
 
     # --- Lógica Principal ---
     gpt_exercicios_filtrados = [ex for ex in gpt_exercicios if 'cloze_text' not in ex]
-    palavras_ativas = db_df[db_df['ativo'] == True]
+    palavras_ativas = db_df[db_df['ativa'] == True]
 
     if palavras_ativas.empty:
         st.warning(get_text("no_active_words", language))

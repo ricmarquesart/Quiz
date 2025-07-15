@@ -31,11 +31,10 @@ def quiz_ui(language, debug_mode):
     
     # --- CORREÇÃO DEFINITIVA PARA KEYERROR ---
     if db_df.empty or 'ativo' not in db_df.columns:
-        st.warning(get_text("no_active_words", language))
-        st.info("Por favor, vá para a página 'Estatísticas & Gerenciador' para ativar algumas palavras.")
-        return # Para a execução da função aqui
+        st.warning("A sua base de vocabulário está a ser sincronizada. Por favor, ative algumas palavras na página 'Estatísticas & Gerenciador' para começar.")
+        return
 
-    # --- Modo de Depuração (Usa os dados recém-carregados) ---
+    # --- Modo de Depuração ---
     if debug_mode:
         st.subheader("Modo de Depuração Detalhado (Quiz ANKI)")
         st.write("---")
@@ -54,7 +53,6 @@ def quiz_ui(language, debug_mode):
             st.error("NENHUMA PALAVRA ATIVA ENCONTRADA. Vá para 'Estatísticas & Gerenciador' e marque algumas palavras como ativas.")
 
         st.markdown("#### 3. Tentativa de Geração da Playlist")
-        # Corrigido para usar a chave 'palavra' consistente
         baralho_map_debug = {card['palavra']: card for card in flashcards if 'palavra' in card}
         gpt_map_debug = {ex['palavra']: ex for ex in gpt_exercicios if 'palavra' in ex}
         playlist_debug = []
@@ -85,7 +83,6 @@ def quiz_ui(language, debug_mode):
     for ex in gpt_exercicios:
         if ex.get('palavra'):
             gpt_map[ex['palavra']].append(ex)
-
 
     tipos_legenda = {
         "MCQ Significado": get_text("word_meaning_anki", language),
@@ -181,7 +178,6 @@ def quiz_ui(language, debug_mode):
                             "acertou": quiz['ultimo_resultado']
                         }
                         quiz.setdefault('resultados_formatados', []).append(resultado_dict)
-                        
                         quiz['idx'] += 1
                         quiz['mostrar_resposta'] = False
                         st.rerun()
