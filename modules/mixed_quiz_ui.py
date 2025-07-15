@@ -37,7 +37,7 @@ def mixed_quiz_ui(language, debug_mode):
 
     # --- Lógica Principal ---
     gpt_exercicios_filtrados = [ex for ex in gpt_exercicios if 'cloze_text' not in ex]
-    palavras_ativas = db_df[db_df['ativa'] == True]
+    palavras_ativas = db_df[db_df['ativo'] == True]
 
     if palavras_ativas.empty:
         st.warning(get_text("no_active_words", language))

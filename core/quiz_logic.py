@@ -17,7 +17,8 @@ def get_available_exercise_types_for_word(palavra, flashcards_map, gpt_exercicio
     if palavra in gpt_exercicios_map:
         for exercicio_gpt in gpt_exercicios_map[palavra]:
             for key in exercicio_gpt:
-                if key not in ['palavra', 'source', 'texto_cloze', 'idioma', 'principal', 'correta', 'opcoes', 'frase', 'cefr_level', 'tipo']:
+                # Uma heurística para identificar um sub-dicionário de exercício
+                if isinstance(exercicio_gpt[key], dict) and 'pergunta' in exercicio_gpt[key]:
                      exercicios_disponiveis[key] = key
 
     return exercicios_disponiveis
@@ -25,16 +26,16 @@ def get_available_exercise_types_for_word(palavra, flashcards_map, gpt_exercicio
 
 def selecionar_questoes_priorizadas(palavras_df, flashcards_map, gpt_exercicios_map, num_questoes, tipo_exercicio="Random"):
     """
-    Seleciona questões priorizando palavras com erros ou não testadas.
+    Seleciona questões priorizando palavras com erros ou não testadas, agora de forma segura.
     """
     playlist = []
     candidatos = []
 
     # --- CORREÇÃO DEFINITIVA PARA KEYERROR ---
     if palavras_df.empty or 'ativo' not in palavras_df.columns:
-        return [] # Retorna lista vazia se não houver dados para processar
+        return [] # Retorna uma lista vazia se não houver dados para processar
 
-    palavras_ativas = palavras_df[palavras_df['ativa']].copy()
+    palavras_ativas = palavras_df[palavras_df['ativo'] == True].copy()
     
     if palavras_ativas.empty:
         return []
@@ -51,12 +52,11 @@ def selecionar_questoes_priorizadas(palavras_df, flashcards_map, gpt_exercicios_
                 prioridade = {'erro': 0, 'nao_testado': 1, 'acerto': 2}.get(status, 2)
                 candidatos.append({'palavra': palavra, 'tipo_exercicio': tipo_gen, 'identificador': id_exercicio, 'prioridade': prioridade})
 
-    candidatos.sort(key=lambda x: x['prioridade'])
-    
     if not candidatos:
         return []
-
-    # Garante que a seleção não exceda o número de candidatos disponíveis
+        
+    candidatos.sort(key=lambda x: x['prioridade'])
+    
     num_a_selecionar = min(num_questoes, len(candidatos))
     playlist = candidatos[:num_a_selecionar]
     random.shuffle(playlist)
@@ -102,13 +102,24 @@ def gerar_questao_dinamica(item_playlist, flashcards_map, gpt_map, db_df):
         
         if resposta_correta:
             opts = [resposta_correta] + [opt for opt in opcoes_distracao if opt]
+            # Garante que as opções são únicas
+            opts = list(dict.fromkeys(opts))
+            while len(opts) < 4 and outras_palavras:
+                # Adiciona mais distrações se necessário
+                palavra_extra = random.choice(outras_palavras)
+                outras_palavras.remove(palavra_extra)
+                # Adapte a chave conforme necessário
+                distracao_extra = flashcards_map[palavra_extra].get('significado' if 'significado' in tipo else 'tradução')
+                if distracao_extra and distracao_extra not in opts:
+                    opts.append(distracao_extra)
+
             random.shuffle(opts)
             ans_idx = opts.index(resposta_correta)
 
     # Lógica para exercícios GPT
     else:
         exercicios_da_palavra = gpt_map.get(palavra, [])
-        exercicio_especifico = next((ex.get(tipo) for ex in exercicios_da_palavra if tipo in ex), None)
+        exercicio_especifico = next((ex.get(id_ex) for ex in exercicios_da_palavra if id_ex in ex), None)
 
         if exercicio_especifico:
             pergunta = exercicio_especifico.get('pergunta')
@@ -118,7 +129,7 @@ def gerar_questao_dinamica(item_playlist, flashcards_map, gpt_map, db_df):
                 try:
                     ans_idx = opts.index(resposta_correta_str)
                 except ValueError:
-                    ans_idx = None # Resposta correta não está nas opções
+                    ans_idx = None
 
     return tipo, pergunta, opts, ans_idx, cefr, id_ex
 
@@ -142,7 +153,6 @@ def selecionar_questoes_gpt(palavras_df, gpt_exercicios_map, tipo_exercicio, n_p
         exercicios_candidatos = []
         for ex in exercicios_da_palavra:
             if tipo_exercicio == "Random":
-                # Adiciona todos os sub-dicionários de exercícios
                 for k, v in ex.items():
                     if isinstance(v, dict) and 'pergunta' in v:
                         exercicios_candidatos.append(v)

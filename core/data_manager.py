@@ -132,9 +132,13 @@ def delete_sentence_log_entry(word_key, language):
     full_data['sentence_log'] = log
     save_user_data(full_data, language)
 
+
 # --- Carregamento de Arquivos e Sincronização ---
 @st.cache_data
 def carregar_arquivos_base(language):
+    """
+    Baixa o conteúdo do GitHub e DEPOIS filtra e processa para o idioma correto.
+    """
     @st.cache_data
     def baixar_conteudo(filename):
         url = BASE_URL + filename
@@ -202,12 +206,32 @@ def carregar_arquivos_base(language):
             except IndexError:
                 continue
         return exercicios_filtrados
-
+    
     conteudo_anki = baixar_conteudo(CARTOES_FILE_BASE)
     conteudo_gpt = baixar_conteudo(GPT_FILE_BASE)
+    
     flashcards = processar_e_filtrar_anki(conteudo_anki, language)
     gpt_exercicios = processar_e_filtrar_gpt(conteudo_gpt, language)
+    
     return flashcards, gpt_exercicios
+
+
+@st.cache_data
+def load_sentence_data(language):
+    url = BASE_URL + SENTENCE_WORDS_FILE
+    words_data = {}
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        col_names = ['Palavra', 'Classe', 'Nível', 'Frase', 'idioma']
+        df = pd.read_csv(StringIO(response.text), sep=';', header=None, names=col_names, on_bad_lines='skip')
+        df = df[df['idioma'] == language]
+        for _, row in df.iterrows():
+            key = f"{row['Palavra']}_{row['Classe']}_{row['Nível']}"
+            words_data[key] = { 'palavra_base': row['Palavra'], 'Classe': row['Classe'], 'Nível': row['Nível'], 'Outra Frase': row['Frase'] }
+    except Exception as e:
+        st.error(f"Erro ao ler arquivo de frases do GitHub: {e}")
+    return words_data
 
 def sync_database(language):
     flashcards, gpt_exercicios = carregar_arquivos_base(language)
