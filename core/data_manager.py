@@ -132,8 +132,8 @@ def delete_sentence_log_entry(word_key, language):
     full_data['sentence_log'] = log
     save_user_data(full_data, language)
 
-
 # --- Carregamento de Arquivos e Sincronização ---
+
 @st.cache_data
 def carregar_arquivos_base(language):
     """
@@ -155,8 +155,8 @@ def carregar_arquivos_base(language):
         if not content: return flashcards_filtrados
         
         lang_map = {'en': 'English', 'fr': 'Francais'}
-        target_lang = lang_map.get(lang)
-        if not target_lang: return flashcards_filtrados
+        target_lang_str = lang_map.get(lang)
+        if not target_lang_str: return flashcards_filtrados
 
         blocos = re.split(r'\n\n+', content.strip())
         for bloco in blocos:
@@ -164,7 +164,7 @@ def carregar_arquivos_base(language):
             linhas = [linha.strip() for linha in bloco.strip().split('\n')]
             header = linhas[0]
 
-            if target_lang not in header:
+            if target_lang_str not in header:
                 continue
 
             card = {'source': 'ANKI', 'idioma': lang}
