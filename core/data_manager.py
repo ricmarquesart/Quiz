@@ -6,9 +6,17 @@ import pandas as pd
 import datetime
 from collections import Counter, defaultdict
 import random
+import requests # Usado para baixar os arquivos do GitHub
 from firebase_admin import firestore
 
-# --- Constantes ---
+# --- Constantes com a nova estrutura do GitHub ---
+GITHUB_USER = "ricmarquesx"
+GITHUB_REPO = "Quiz"
+BRANCH = "main" # Geralmente 'main' ou 'master'
+
+# URL base para acessar os arquivos "crus" (raw) na sua pasta 'data'
+BASE_URL = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/{BRANCH}/data/"
+
 CARTOES_FILE_BASE = 'cartoes_validacao.txt'
 GPT_FILE_BASE = 'Dados_Manual_output_GPT.txt'
 CLOZE_FILE_BASE = 'Dados_Manual_Cloze_text.txt'
@@ -17,18 +25,12 @@ TIPOS_EXERCICIO_ANKI = {
     "MCQ Significado": "gerar_mcq_significado", "MCQ Tradução Inglês": "gerar_mcq_traducao_ingles",
     "MCQ Sinônimo": "gerar_mcq_sinonimo", "Fill": "gerar_fill_gap", "Reading": "gerar_reading_comprehension"
 }
-TIPOS_EXERCICIO_GPT = [
-    "sinonimo_mcq", "antonym_mcq", "definition_mcq", "context_mcq",
-    "fill_in_the_blank_1", "fill_in_the_blank_2", "cloze_text"
-]
 
-# --- Interação com Firestore ---
+# --- Interação com Firestore (Permanece igual) ---
 def get_firestore_db():
-    """Retorna uma instância do cliente Firestore."""
     return firestore.client()
 
 def get_user_doc_ref(language):
-    """Obtém a referência do documento do usuário logado."""
     if 'user_info' not in st.session_state or not st.session_state.get('logged_in'):
         return None
     uid = st.session_state['user_info']['uid']
@@ -36,22 +38,19 @@ def get_user_doc_ref(language):
     return get_firestore_db().collection(collection_name).document(uid)
 
 def get_user_data(language):
-    """Carrega todos os dados de um usuário do Firestore."""
     doc_ref = get_user_doc_ref(language)
     if doc_ref:
         doc = doc_ref.get()
         if doc.exists:
             return doc.to_dict()
-    # Estrutura padrão para um novo usuário
     return {
         'vocab_database': [],
-        'historico': {"quiz": [], "gpt_quiz": [], "mixed_quiz": [], "review_quiz": [], "focus_quiz": [], "cloze_quiz": []},
+        'historico': {},
         'writing_log': [],
         'sentence_log': []
     }
 
 def save_user_data(data_dict, language):
-    """Salva um dicionário de dados completo para o usuário."""
     doc_ref = get_user_doc_ref(language)
     if doc_ref:
         doc_ref.set(data_dict)
@@ -75,7 +74,7 @@ def save_history(historico, language):
 
 def clear_history(language):
     full_data = get_user_data(language)
-    full_data['historico'] = {k: [] for k in full_data.get('historico', {}).keys()}
+    full_data['historico'] = {}
     save_user_data(full_data, language)
     st.success("Histórico de quizzes limpo com sucesso!")
 
@@ -140,33 +139,70 @@ def delete_sentence_log_entry(word_key, language):
     save_user_data(full_data, language)
 
 
-# --- Carregamento de Arquivos e Sincronização ---
+# --- NOVA FUNÇÃO DE CARREGAMENTO DO GITHUB ---
 @st.cache_data
-def carregar_arquivos_base(_language):
-    # Lembre-se de implementar sua lógica de carregamento de arquivos .txt aqui
-    return [], []
+def carregar_arquivos_base():
+    """Baixa e processa os arquivos de base do GitHub."""
+    def baixar_e_processar(filename, process_func):
+        url = BASE_URL + filename
+        try:
+            response = requests.get(url)
+            response.raise_for_status() # Lança um erro se o download falhar (ex: 404)
+            content = response.text
+            return process_func(content)
+        except requests.exceptions.RequestException as e:
+            st.error(f"Falha ao baixar '{filename}' do GitHub: {e}")
+            return []
+
+    # Você precisa colar sua lógica de parsing aqui dentro
+    def processar_anki(content):
+        # COLE AQUI SUA LÓGICA PARA PROCESSAR O CONTEÚDO DO cartoes_validacao.txt
+        return []
+
+    def processar_gpt(content):
+        # COLE AQUI SUA LÓGICA PARA PROCESSAR O CONTEÚDO DO Dados_Manual_output_GPT.txt
+        return []
+    
+    def processar_cloze(content):
+        # COLE AQUI SUA LÓGICA PARA PROCESSAR O CONTEÚDO DO Dados_Manual_Cloze_text.txt
+        return []
+
+    flashcards = baixar_e_processar(CARTOES_FILE_BASE, processar_anki)
+    gpt_exercicios = baixar_e_processar(GPT_FILE_BASE, processar_gpt)
+    cloze_exercicios = baixar_e_processar(CLOZE_FILE_BASE, processar_cloze)
+
+    return flashcards, gpt_exercicios + cloze_exercicios
 
 @st.cache_data
 def load_sentence_data(language):
-    data_path = 'data'
-    filepath = os.path.join(data_path, language, SENTENCE_WORDS_FILE)
+    # Esta função agora também deve ler do GitHub
+    url = BASE_URL + SENTENCE_WORDS_FILE
     words_data = {}
     try:
-        df = pd.read_csv(filepath, sep=';')
+        response = requests.get(url)
+        response.raise_for_status()
+        # Assumindo que o arquivo é CSV, podemos usar o pandas para ler diretamente da URL
+        from io import StringIO
+        df = pd.read_csv(StringIO(response.text), sep=';')
+        # Lógica para filtrar por idioma, se a coluna 'idioma' existir no arquivo
+        if 'idioma' in df.columns:
+            df = df[df['idioma'] == language]
         for _, row in df.iterrows():
             key = f"{row['Palavra']}_{row['Classe']}_{row['Nível']}"
-            words_data[key] = {
-                'palavra_base': row['Palavra'],
-                'Classe': row['Classe'],
-                'Nível': row['Nível'],
-                'Outra Frase': row['Frase']
-            }
-    except Exception:
-        pass # Falha silenciosamente se o arquivo não for encontrado
+            words_data[key] = { 'palavra_base': row['Palavra'], 'Classe': row['Classe'], 'Nível': row['Nível'], 'Outra Frase': row['Frase'] }
+    except Exception as e:
+        st.error(f"Erro ao ler arquivo de frases do GitHub: {e}")
     return words_data
 
+# --- Sincronização e Gerenciamento de BD (Ajustado) ---
 def sync_database(language):
-    flashcards, gpt_exercicios = carregar_arquivos_base(language)
+    flashcards_raw, gpt_raw = carregar_arquivos_base()
+    
+    # IMPORTANTE: Filtre os dados aqui para o idioma correto, já que agora lemos tudo de uma vez
+    # Esta lógica depende de como você diferencia os idiomas nos seus .txt
+    flashcards = [f for f in flashcards_raw] # Adapte esta linha
+    gpt_exercicios = [g for g in gpt_raw] # Adapte esta linha
+
     db_list = get_vocab_db_list(language)
     db_dict = {item['palavra']: item for item in db_list}
     all_source_words = {f.get('palavra') for f in flashcards if f.get('palavra')} | \
@@ -179,14 +215,12 @@ def sync_database(language):
                 'contagem_maestria': 0, 'data_adicao': datetime.datetime.now().strftime("%Y-%m-%d"),
                 'escrita_completa': False, 'cefr': 'N/A'
             }
+
     updated_list = list(db_dict.values())
     if updated_list:
         save_vocab_db_list(updated_list, language)
     
-    expected_columns = [
-        'palavra', 'ativo', 'fonte', 'progresso', 'contagem_maestria', 
-        'data_adicao', 'escrita_completa', 'cefr'
-    ]
+    expected_columns = ['palavra', 'ativo', 'fonte', 'progresso', 'contagem_maestria', 'data_adicao', 'escrita_completa', 'cefr']
     if not updated_list:
         return pd.DataFrame(columns=expected_columns)
     else:
@@ -199,10 +233,7 @@ def sync_database(language):
 def get_session_db(language):
     session_key = f"db_df_{language}"
     if 'user_info' not in st.session_state:
-        return pd.DataFrame(columns=[
-            'palavra', 'ativo', 'fonte', 'progresso', 'contagem_maestria', 
-            'data_adicao', 'escrita_completa', 'cefr'
-        ])
+        return pd.DataFrame(columns=expected_columns)
     if session_key not in st.session_state:
         st.session_state[session_key] = sync_database(language)
     return st.session_state[session_key]
@@ -215,17 +246,14 @@ def save_vocab_db(df, language):
 def get_performance_summary(language):
     db_df = get_session_db(language)
     historico = get_history(language)
-
     summary = {
         'db_kpis': {'total': 0, 'ativas': 0, 'inativas': 0},
         'kpis': {'precisao': 'N/A', 'sessoes': 0}
     }
-
     if not db_df.empty and 'ativo' in db_df.columns:
         summary['db_kpis']['total'] = len(db_df)
         summary['db_kpis']['ativas'] = int(db_df['ativo'].sum())
         summary['db_kpis']['inativas'] = summary['db_kpis']['total'] - summary['db_kpis']['ativas']
-
     if historico:
         total_sessoes = sum(len(v) for v in historico.values())
         total_acertos = sum(s.get('acertos', 0) for v in historico.values() for s in v)
@@ -233,5 +261,4 @@ def get_performance_summary(language):
         if (total_acertos + total_erros) > 0:
             summary['kpis']['precisao'] = f"{total_acertos / (total_acertos + total_erros) * 100:.1f}%"
         summary['kpis']['sessoes'] = total_sessoes
-        
     return summary
