@@ -8,6 +8,7 @@ from collections import Counter, defaultdict
 import random
 import requests
 from firebase_admin import firestore
+from io import StringIO
 
 # --- Constantes ---
 GITHUB_USER = "ricmarquesart"
@@ -42,10 +43,7 @@ def get_user_data(language):
         if doc.exists:
             return doc.to_dict()
     return {
-        'vocab_database': [],
-        'historico': {},
-        'writing_log': [],
-        'sentence_log': []
+        'vocab_database': [], 'historico': {}, 'writing_log': [], 'sentence_log': []
     }
 
 def save_user_data(data_dict, language):
@@ -136,12 +134,12 @@ def delete_sentence_log_entry(word_key, language):
     full_data['sentence_log'] = log
     save_user_data(full_data, language)
 
-# --- Carregamento de Arquivos e Sincronização (Lógica Original Restaurada) ---
+# --- Carregamento de Arquivos e Sincronização ---
 
 @st.cache_data
 def carregar_arquivos_base(language):
     """
-    Baixa o conteúdo do GitHub e DEPOIS filtra por idioma.
+    Baixa o conteúdo do GitHub e DEPOIS filtra e processa para o idioma correto.
     """
     @st.cache_data
     def baixar_conteudo(filename):
@@ -154,50 +152,91 @@ def carregar_arquivos_base(language):
             st.error(f"Falha ao baixar '{filename}' do GitHub: {e}")
             return None
 
-    # As suas funções de parsing originais.
-    # **VOCÊ PRECISA COLAR SEU CÓDIGO DE PARSING ORIGINAL AQUI DENTRO**
     def processar_e_filtrar_anki(content, lang):
         flashcards_filtrados = []
         if not content: return flashcards_filtrados
-        # COLE AQUI SUA LÓGICA ORIGINAL PARA LER O ARQUIVO ANKI E SEPARAR POR IDIOMA
-        # Exemplo:
-        # for block in content.strip().split('---'):
-        #     if f"lang:{lang}" in block:
-        #         # Processa o bloco e adiciona a flashcards_filtrados
+        
+        blocos = re.split(r'\n\n+', content.strip())
+        
+        for bloco in blocos:
+            if not bloco.strip(): continue
+            linhas = [linha.strip() for linha in bloco.strip().split('\n')]
+            header = linhas[0]
+            
+            lang_map = {'en': 'English', 'fr': 'Francais'}
+            if lang_map.get(lang) not in header:
+                continue
+
+            card = {'source': 'ANKI', 'idioma': lang}
+            match = re.match(r"(.+?)\s*\((.+?)\s*\|\s*(.+?)\s*\|\s*(.+?)\):", header)
+            if match:
+                card['palavra'] = match.group(1).strip()
+                card['classe'] = match.group(2).strip()
+                card['cefr'] = match.group(3).strip()
+            else:
+                continue
+
+            for linha in linhas[1:]:
+                if ': ' in linha:
+                    # Remove o antes de separar
+                    linha_limpa = re.sub(r'\\s*', '', linha).strip()
+                    key, value = linha_limpa.split(': ', 1)
+                    key = key.replace('- ', '').strip().lower().replace(' ', '_')
+                    card[key] = value.strip()
+            
+            flashcards_filtrados.append(card)
+            
         return flashcards_filtrados
 
     def processar_e_filtrar_gpt(content, lang):
         exercicios_filtrados = []
         if not content: return exercicios_filtrados
-        # COLE AQUI SUA LÓGICA ORIGINAL PARA LER O ARQUIVO GPT E SEPARAR POR IDIOMA
+        
+        for linha in content.strip().split('\n'):
+            linha_limpa = re.sub(r'\\s*', '', linha).strip()
+            partes = linha_limpa.strip().split(';')
+            if not partes or partes[0] != lang:
+                continue
+            
+            try:
+                exercicio = {
+                    'idioma': partes[0], 'tipo': partes[1], 'frase': partes[2],
+                    'opcoes': [opt.strip() for opt in partes[3].split('|')],
+                    'correta': partes[4], 'principal': partes[5], 'cefr_level': partes[6],
+                    'source': 'GPT', 'palavra': partes[5] # Adiciona a chave 'palavra'
+                }
+                exercicios_filtrados.append(exercicio)
+            except IndexError:
+                continue
+                
         return exercicios_filtrados
-
+    
     conteudo_anki = baixar_conteudo(CARTOES_FILE_BASE)
     conteudo_gpt = baixar_conteudo(GPT_FILE_BASE)
     
     flashcards = processar_e_filtrar_anki(conteudo_anki, language)
     gpt_exercicios = processar_e_filtrar_gpt(conteudo_gpt, language)
     
-    # A função agora retorna os dados já filtrados para o idioma correto
     return flashcards, gpt_exercicios
+
 
 @st.cache_data
 def load_sentence_data(language):
     url = BASE_URL + SENTENCE_WORDS_FILE
     words_data = {}
     try:
-        from io import StringIO
         response = requests.get(url)
         response.raise_for_status()
-        df = pd.read_csv(StringIO(response.text), sep=';')
-        if 'idioma' in df.columns:
-            df = df[df['idioma'] == language]
+        col_names = ['Palavra', 'Classe', 'Nível', 'Frase', 'idioma']
+        df = pd.read_csv(StringIO(response.text), sep=';', header=None, names=col_names, on_bad_lines='skip')
+        df = df[df['idioma'] == language]
         for _, row in df.iterrows():
             key = f"{row['Palavra']}_{row['Classe']}_{row['Nível']}"
             words_data[key] = { 'palavra_base': row['Palavra'], 'Classe': row['Classe'], 'Nível': row['Nível'], 'Outra Frase': row['Frase'] }
     except Exception as e:
         st.error(f"Erro ao ler arquivo de frases do GitHub: {e}")
     return words_data
+
 
 def sync_database(language):
     flashcards, gpt_exercicios = carregar_arquivos_base(language)
@@ -219,19 +258,19 @@ def sync_database(language):
         save_vocab_db_list(updated_list, language)
     
     expected_columns = ['palavra', 'ativo', 'fonte', 'progresso', 'contagem_maestria', 'data_adicao', 'escrita_completa', 'cefr']
-    if not updated_list:
+    if not updated_list and not db_list: # Se a base estava vazia e continua vazia
         return pd.DataFrame(columns=expected_columns)
-    else:
-        df = pd.DataFrame(updated_list)
-        for col in expected_columns:
-            if col not in df.columns:
-                df[col] = None
-        return df
+    
+    df = pd.DataFrame(updated_list if updated_list else db_list)
+    for col in expected_columns:
+        if col not in df.columns:
+            df[col] = None
+    return df
 
 def get_session_db(language):
     session_key = f"db_df_{language}"
     if 'user_info' not in st.session_state:
-        return pd.DataFrame(columns=expected_columns)
+        return pd.DataFrame(columns=['palavra', 'ativo']) # Retorno mínimo seguro
     if session_key not in st.session_state:
         st.session_state[session_key] = sync_database(language)
     return st.session_state[session_key]
