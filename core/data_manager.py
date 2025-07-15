@@ -25,7 +25,7 @@ TIPOS_EXERCICIO_ANKI = {
     "MCQ Sinônimo": "gerar_mcq_sinonimo", "Fill": "gerar_fill_gap", "Reading": "gerar_reading_comprehension"
 }
 
-# --- Funções de Interação com Firestore ---
+# --- Funções de Interação com Firestore (Completo) ---
 def get_firestore_db():
     return firestore.client()
 
@@ -72,36 +72,6 @@ def clear_history(language):
     save_user_data(full_data, language)
     st.success("Histórico de quizzes limpo com sucesso!")
 
-def get_writing_log(language):
-    return get_user_data(language).get('writing_log', [])
-
-def add_writing_entry(entry, language):
-    full_data = get_user_data(language)
-    writing_log = full_data.get('writing_log', [])
-    writing_log = [e for e in writing_log if e['palavra'] != entry['palavra']]
-    writing_log.append(entry)
-    full_data['writing_log'] = writing_log
-    for word_data in full_data['vocab_database']:
-        if word_data['palavra'] == entry['palavra']:
-            word_data['escrita_completa'] = True
-            break
-    save_user_data(full_data, language)
-    st.session_state.pop(f"db_df_{language}", None)
-
-def delete_writing_entries(entries_to_delete, language):
-    full_data = get_user_data(language)
-    entries_to_delete_set = set((d['palavra'], d['texto']) for d in entries_to_delete)
-    current_log = full_data.get('writing_log', [])
-    new_log = [entry for entry in current_log if (entry['palavra'], entry['texto']) not in entries_to_delete_set]
-    full_data['writing_log'] = new_log
-    words_deleted = {entry['palavra'] for entry in entries_to_delete}
-    for word_data in full_data.get('vocab_database', []):
-        if word_data['palavra'] in words_deleted:
-            if not any(entry['palavra'] == word_data['palavra'] for entry in new_log):
-                word_data['escrita_completa'] = False
-    save_user_data(full_data, language)
-    st.session_state.pop(f"db_df_{language}", None)
-
 def update_progress_from_quiz(quiz_results, language):
     db_df = get_session_db(language)
     if db_df.empty: return
@@ -117,22 +87,7 @@ def update_progress_from_quiz(quiz_results, language):
     save_vocab_db(db_df, language)
     st.session_state.pop(f"db_df_{language}", None)
 
-def load_sentence_log(language):
-    return get_user_data(language).get('sentence_log', [])
-
-def save_sentence_log(log_data, language):
-    full_data = get_user_data(language)
-    full_data['sentence_log'] = log_data
-    save_user_data(full_data, language)
-
-def delete_sentence_log_entry(word_key, language):
-    full_data = get_user_data(language)
-    log = full_data.get('sentence_log', [])
-    log = [entry for entry in log if entry.get('palavra_chave') != word_key]
-    full_data['sentence_log'] = log
-    save_user_data(full_data, language)
-
-# --- Carregamento de Arquivos e Sincronização ---
+# --- Carregamento de Arquivos e Sincronização (LÓGICA DE LEITURA CORRIGIDA) ---
 
 @st.cache_data
 def carregar_arquivos_base(language):
@@ -158,7 +113,9 @@ def carregar_arquivos_base(language):
         target_lang_str = lang_map.get(lang)
         if not target_lang_str: return flashcards_filtrados
 
-        blocos = re.split(r'\n\n+', content.strip())
+        # Usa uma expressão regular para separar os blocos de forma mais robusta
+        blocos = re.split(r'\n\s*\n', content.strip())
+        
         for bloco in blocos:
             if not bloco.strip(): continue
             linhas = [linha.strip() for linha in bloco.strip().split('\n')]
@@ -200,7 +157,7 @@ def carregar_arquivos_base(language):
                     'idioma': partes[0], 'tipo': partes[1], 'frase': partes[2],
                     'opcoes': [opt.strip() for opt in partes[3].split('|')],
                     'correta': partes[4], 'principal': partes[5], 'cefr_level': partes[6],
-                    'source': 'GPT', 'palavra': partes[5]
+                    'source': 'GPT', 'palavra': partes[5] # Adiciona a chave 'palavra' para consistência
                 }
                 exercicios_filtrados.append(exercicio)
             except IndexError:
@@ -215,23 +172,6 @@ def carregar_arquivos_base(language):
     
     return flashcards, gpt_exercicios
 
-
-@st.cache_data
-def load_sentence_data(language):
-    url = BASE_URL + SENTENCE_WORDS_FILE
-    words_data = {}
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        col_names = ['Palavra', 'Classe', 'Nível', 'Frase', 'idioma']
-        df = pd.read_csv(StringIO(response.text), sep=';', header=None, names=col_names, on_bad_lines='skip')
-        df = df[df['idioma'] == language]
-        for _, row in df.iterrows():
-            key = f"{row['Palavra']}_{row['Classe']}_{row['Nível']}"
-            words_data[key] = { 'palavra_base': row['Palavra'], 'Classe': row['Classe'], 'Nível': row['Nível'], 'Outra Frase': row['Frase'] }
-    except Exception as e:
-        st.error(f"Erro ao ler arquivo de frases do GitHub: {e}")
-    return words_data
 
 def sync_database(language):
     flashcards, gpt_exercicios = carregar_arquivos_base(language)

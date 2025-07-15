@@ -102,13 +102,10 @@ def gerar_questao_dinamica(item_playlist, flashcards_map, gpt_map, db_df):
         
         if resposta_correta:
             opts = [resposta_correta] + [opt for opt in opcoes_distracao if opt]
-            # Garante que as opções são únicas
-            opts = list(dict.fromkeys(opts))
+            opts = list(dict.fromkeys(opts)) # Garante que as opções são únicas
             while len(opts) < 4 and outras_palavras:
-                # Adiciona mais distrações se necessário
                 palavra_extra = random.choice(outras_palavras)
                 outras_palavras.remove(palavra_extra)
-                # Adapte a chave conforme necessário
                 distracao_extra = flashcards_map[palavra_extra].get('significado' if 'significado' in tipo else 'tradução')
                 if distracao_extra and distracao_extra not in opts:
                     opts.append(distracao_extra)
