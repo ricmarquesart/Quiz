@@ -43,7 +43,10 @@ def get_user_data(language):
         if doc.exists:
             return doc.to_dict()
     return {
-        'vocab_database': [], 'historico': {}, 'writing_log': [], 'sentence_log': []
+        'vocab_database': [],
+        'historico': {},
+        'writing_log': [],
+        'sentence_log': []
     }
 
 def save_user_data(data_dict, language):
@@ -156,15 +159,17 @@ def carregar_arquivos_base(language):
         flashcards_filtrados = []
         if not content: return flashcards_filtrados
         
+        lang_map = {'en': 'English', 'fr': 'Francais'}
+        target_lang = lang_map.get(lang)
+        if not target_lang: return flashcards_filtrados
+
         blocos = re.split(r'\n\n+', content.strip())
-        
         for bloco in blocos:
             if not bloco.strip(): continue
             linhas = [linha.strip() for linha in bloco.strip().split('\n')]
             header = linhas[0]
-            
-            lang_map = {'en': 'English', 'fr': 'Francais'}
-            if lang_map.get(lang) not in header:
+
+            if target_lang not in header:
                 continue
 
             card = {'source': 'ANKI', 'idioma': lang}
@@ -178,20 +183,17 @@ def carregar_arquivos_base(language):
 
             for linha in linhas[1:]:
                 if ': ' in linha:
-                    # Remove o antes de separar
                     linha_limpa = re.sub(r'\\s*', '', linha).strip()
                     key, value = linha_limpa.split(': ', 1)
                     key = key.replace('- ', '').strip().lower().replace(' ', '_')
                     card[key] = value.strip()
             
             flashcards_filtrados.append(card)
-            
         return flashcards_filtrados
 
     def processar_e_filtrar_gpt(content, lang):
         exercicios_filtrados = []
         if not content: return exercicios_filtrados
-        
         for linha in content.strip().split('\n'):
             linha_limpa = re.sub(r'\\s*', '', linha).strip()
             partes = linha_limpa.strip().split(';')
@@ -203,12 +205,11 @@ def carregar_arquivos_base(language):
                     'idioma': partes[0], 'tipo': partes[1], 'frase': partes[2],
                     'opcoes': [opt.strip() for opt in partes[3].split('|')],
                     'correta': partes[4], 'principal': partes[5], 'cefr_level': partes[6],
-                    'source': 'GPT', 'palavra': partes[5] # Adiciona a chave 'palavra'
+                    'source': 'GPT', 'palavra': partes[5]
                 }
                 exercicios_filtrados.append(exercicio)
             except IndexError:
                 continue
-                
         return exercicios_filtrados
     
     conteudo_anki = baixar_conteudo(CARTOES_FILE_BASE)
@@ -218,7 +219,6 @@ def carregar_arquivos_base(language):
     gpt_exercicios = processar_e_filtrar_gpt(conteudo_gpt, language)
     
     return flashcards, gpt_exercicios
-
 
 @st.cache_data
 def load_sentence_data(language):
@@ -237,7 +237,6 @@ def load_sentence_data(language):
         st.error(f"Erro ao ler arquivo de frases do GitHub: {e}")
     return words_data
 
-
 def sync_database(language):
     flashcards, gpt_exercicios = carregar_arquivos_base(language)
     db_list = get_vocab_db_list(language)
@@ -252,13 +251,12 @@ def sync_database(language):
                 'contagem_maestria': 0, 'data_adicao': datetime.datetime.now().strftime("%Y-%m-%d"),
                 'escrita_completa': False, 'cefr': 'N/A'
             }
-
     updated_list = list(db_dict.values())
     if updated_list:
         save_vocab_db_list(updated_list, language)
     
     expected_columns = ['palavra', 'ativo', 'fonte', 'progresso', 'contagem_maestria', 'data_adicao', 'escrita_completa', 'cefr']
-    if not updated_list and not db_list: # Se a base estava vazia e continua vazia
+    if not updated_list and not db_list:
         return pd.DataFrame(columns=expected_columns)
     
     df = pd.DataFrame(updated_list if updated_list else db_list)
@@ -270,7 +268,7 @@ def sync_database(language):
 def get_session_db(language):
     session_key = f"db_df_{language}"
     if 'user_info' not in st.session_state:
-        return pd.DataFrame(columns=['palavra', 'ativo']) # Retorno mínimo seguro
+        return pd.DataFrame(columns=['palavra', 'ativo'])
     if session_key not in st.session_state:
         st.session_state[session_key] = sync_database(language)
     return st.session_state[session_key]
