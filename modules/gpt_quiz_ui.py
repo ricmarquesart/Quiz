@@ -18,7 +18,7 @@ def gpt_ex_ui(language, debug_mode):
     Renderiza a página do Quiz GPT, com depuração, tradução e tratamento de erros para novos utilizadores.
     """
     # --- Carregamento de Dados ---
-    _, gpt_exercicios = carregar_arquivos_base(language)
+    flashcards, gpt_exercicios = carregar_arquivos_base(language)
     db_df = get_session_db(language)
 
     # --- Botão de Voltar ---
@@ -34,12 +34,13 @@ def gpt_ex_ui(language, debug_mode):
         st.warning("A sua base de vocabulário está a ser sincronizada. Por favor, ative algumas palavras na página 'Estatísticas & Gerenciador' para começar.")
         return
 
-    gpt_exercicios_filtrados = [ex for ex in gpt_exercicios if 'cloze_text' not in ex]
+    gpt_exercicios_filtrados = [ex for ex in gpt_exercicios if ex.get('tipo') != '7-Cloze-Text']
+
     palavras_ativas = db_df[db_df['ativo'] == True]
     
     gpt_exercicios_map = defaultdict(list)
     for ex in gpt_exercicios_filtrados:
-        if ex.get('principal'):
+        if isinstance(ex.get('principal'), str):
             gpt_exercicios_map[ex['principal']].append(ex)
 
     # --- Modo de Depuração ---
@@ -47,16 +48,23 @@ def gpt_ex_ui(language, debug_mode):
         st.subheader(f"Modo de Depuração Detalhado ({get_text('gpt_quiz_button', language)})")
         st.write("---")
         st.markdown(f"**1. Dados de Entrada:**")
-        st.write(f"- Total de exercícios GPT (bruto, incluindo cloze): `{len(gpt_exercicios)}`")
+        st.write(f"- Total de exercícios GPT (bruto): `{len(gpt_exercicios)}`")
         st.write(f"- Exercícios GPT (padrão) recebidos: `{len(gpt_exercicios_filtrados)}`")
         
+        parsing_errors = st.session_state.get(f'parsing_errors_{language}', [])
+        if any("GPT" in error for error in parsing_errors):
+            st.error("Erros detectados durante o carregamento dos dados GPT:")
+            for error in parsing_errors:
+                if "GPT" in error: st.code(error)
+        
+        palavras_ativas_debug = db_df[db_df['ativo']]
         st.markdown(f"**2. Palavras Ativas:**")
-        st.write(f"- Total de palavras ativas encontradas: `{len(palavras_ativas)}`")
+        st.write(f"- Total de palavras ativas encontradas: `{len(palavras_ativas_debug)}`")
 
         st.markdown(f"**3. Mapeamento de Exercícios:**")
         st.write(f"- Total de palavras com exercícios GPT mapeados: `{len(gpt_exercicios_map)}`")
 
-        palavras_prontas = sorted([p for p in gpt_exercicios_map if p in set(palavras_ativas['palavra'].values)])
+        palavras_prontas = sorted([p for p in gpt_exercicios_map if p in set(palavras_ativas_debug['palavra'].values)])
         st.markdown(f"**4. Cruzamento de Dados:**")
         st.write(f"- Total de palavras ativas que possuem exercícios GPT: `{len(palavras_prontas)}`")
 
@@ -79,7 +87,7 @@ def gpt_ex_ui(language, debug_mode):
 
     if not st.session_state.gpt_ex_quiz.get('started', False):
         with st.form("gpt_ex_cfg"):
-            tipos_disponiveis = sorted(list(set(ex['tipo'] for ex_list in gpt_exercicios_map.values() for ex in ex_list)))
+            tipos_disponiveis = sorted(list(set(e['tipo'] for e_list in gpt_exercicios_map.values() for e in e_list)))
             tipos_exibidos = ["Random"] + tipos_disponiveis
             tipo_escolhido = st.selectbox(get_text("choose_exercise_type", language), tipos_exibidos)
             
@@ -125,11 +133,73 @@ def gpt_ex_ui(language, debug_mode):
             correta = ex.get('correta')
             keyword = ex.get('principal')
             cefr_level = ex.get('cefr_level')
-            
-            # O resto da sua lógica de UI e de quiz...
 
+            tipos_para_filtrar_keyword = ["2-Word-Meaning", "3-Paraphrase", "4-Minimal-Pair"]
+            if tipo in tipos_para_filtrar_keyword:
+                opcoes_filtradas = [opt for opt in opts_originais if opt.lower() != keyword.lower()]
+            else:
+                opcoes_filtradas = opts_originais
+            opts = list(set(opcoes_filtradas))
+            if len(opts) < 4:
+                necessarios = 4 - len(opts)
+                palavras_existentes = {opt.lower() for opt in opts}
+                palavras_existentes.add(keyword.lower())
+                palavras_existentes.add(correta.lower())
+                pool_distratores = [p for p in db_df['palavra'].tolist() if p.lower() not in palavras_existentes]
+                if len(pool_distratores) >= necessarios:
+                    novos_distratores = random.sample(pool_distratores, k=necessarios)
+                    opts.extend(novos_distratores)
+
+            col1, col2 = st.columns([4, 1])
+            with col1:
+                st.progress(idx / total, get_text("quiz_progress", language).format(idx=idx, total=total))
+                st.markdown(f'<div class="quiz-title">{tipo}</div>', unsafe_allow_html=True)
+            with col2:
+                if cefr_level:
+                    st.markdown(f'<div style="text-align: right; font-weight: bold; font-size: 24px; color: #888;">{cefr_level}</div>', unsafe_allow_html=True)
+
+            frase_html = re.sub(rf'{re.escape(ex["principal"])}', f'<span class="keyword-highlight">{ex["principal"]}</span>', pergunta, flags=re.IGNORECASE)
+            st.markdown(f'<div class="question-bg">{frase_html}</div>', unsafe_allow_html=True)
+
+            with st.container():
+                st.markdown('<div class="options-container">', unsafe_allow_html=True)
+                if f"gpt_ex_opts_{idx}" not in st.session_state:
+                    random.shuffle(opts)
+                    st.session_state[f"gpt_ex_opts_{idx}"] = opts
+                
+                if correta not in st.session_state[f"gpt_ex_opts_{idx}"]:
+                    quiz_state['idx'] += 1
+                    st.rerun()
+
+                resposta = st.radio("", st.session_state[f"gpt_ex_opts_{idx}"], key=f"gpt_ex_radio_{idx}", label_visibility="collapsed")
+                st.markdown('</div>', unsafe_allow_html=True)
+            
+            col_btn1, col_btn2 = st.columns([3, 1])
+            with col_btn1:
+                if not quiz_state.get('show'):
+                    if st.button(get_text("check_button", language), key=f"gpt_ex_check_{idx}"):
+                        quiz_state['show'] = True
+                        quiz_state['ultimo_resultado'] = (resposta == correta)
+                        quiz_state['ultimo_correto'] = correta
+                        st.rerun()
+                else:
+                    if st.button(get_text("next_button", language), key=f"gpt_ex_next_{idx}"):
+                        resultado_dict = {
+                            "palavra": ex["principal"], 
+                            "tipo_exercicio": ex['tipo'],
+                            "acertou": quiz_state['ultimo_resultado']
+                        }
+                        quiz_state.setdefault('resultados_formatados', []).append(resultado_dict)
+                        quiz_state['idx'] += 1
+                        quiz_state['show'] = False
+                        st.rerun()
+                    if quiz_state['ultimo_resultado']: st.success(get_text("correct_answer", language))
+                    else: st.error(get_text("incorrect_answer", language).format(correct=quiz_state['ultimo_correto']))
+            with col_btn2:
+                if st.button(get_text("cancel_exercises", language)): 
+                    st.session_state.pop('gpt_ex_quiz', None)
+                    st.rerun()
         else:
-            # Lógica da tela de resultados...
             resultados_finais = quiz_state.get('resultados_formatados', [])
             update_progress_from_quiz(resultados_finais, language)
             
