@@ -3,9 +3,9 @@ import random
 import datetime
 from collections import defaultdict
 from core.data_manager import (
-    get_session_db,
-    update_progress_from_quiz,
-    save_history,
+    get_session_db, 
+    update_progress_from_quiz, 
+    save_history, 
     get_history,
     carregar_arquivos_base,
     TIPOS_EXERCICIO_ANKI
@@ -15,9 +15,9 @@ from core.localization import get_text
 
 def quiz_ui(language, debug_mode):
     """
-    Renderiza a página do Quiz ANKI, com modo de depuração robusto e interface traduzida.
+    Renderiza a página do Quiz ANKI, agora carregando seus próprios dados e com tratamento para novos usuários.
     """
-    # --- Carregamento de Dados ---
+    # --- PASSO 1: Carregar os dados necessários no início ---
     flashcards, gpt_exercicios = carregar_arquivos_base(language)
     db_df = get_session_db(language)
 
@@ -28,19 +28,21 @@ def quiz_ui(language, debug_mode):
         st.rerun()
 
     st.header(get_text("anki_quiz_title", language))
-
+    
     # --- CORREÇÃO DEFINITIVA PARA KEYERROR ---
+    # Verifica se o DataFrame está vazio ou se falta a coluna 'ativa' antes de continuar.
     if db_df.empty or 'ativo' not in db_df.columns:
-        st.warning("A sua base de vocabulário está a ser sincronizada. Por favor, ative algumas palavras na página 'Estatísticas & Gerenciador' para começar.")
-        return
+        st.warning(get_text("no_active_words", language))
+        st.info("Por favor, vá para a página 'Estatísticas & Gerenciador' para ativar algumas palavras para praticar.")
+        return # Para a execução da função aqui para evitar o erro
 
-    # --- Modo de Depuração ---
+    # --- Modo de Depuração (Usa os dados recém-carregados) ---
     if debug_mode:
         st.subheader("Modo de Depuração Detalhado (Quiz ANKI)")
         st.write("---")
         
         st.markdown("#### 1. Verificação de Dados de Entrada")
-        st.write(f"Total de Flashcards recebidos: `{len(flashcards)}`")
+        st.write(f"Total de Flashcards carregados do arquivo: `{len(flashcards)}`")
         if not flashcards:
             st.error("NENHUM FLASHCARD CARREGADO. Verifique se o arquivo `cartoes_validacao.txt` existe e não está vazio.")
         with st.expander("Ver amostra dos Flashcards (os 2 primeiros)"):
@@ -48,17 +50,16 @@ def quiz_ui(language, debug_mode):
         
         palavras_ativas_debug = db_df[db_df['ativo'] == True]
         st.markdown("#### 2. Verificação de Palavras Ativas")
-        st.write(f"Total de palavras ativas encontradas no banco de dados: `{len(palavras_ativas_debug)}`")
+        st.write(f"Total de palavras ativas encontradas no banco de dados do usuário: `{len(palavras_ativas_debug)}`")
         if palavras_ativas_debug.empty:
             st.error("NENHUMA PALAVRA ATIVA ENCONTRADA. Vá para 'Estatísticas & Gerenciador' e marque algumas palavras como ativas.")
 
         st.markdown("#### 3. Tentativa de Geração da Playlist")
-        baralho_map_debug = {card['palavra']: card for card in flashcards if 'palavra' in card}
-        gpt_map_debug = {ex['palavra']: ex for ex in gpt_exercicios if 'palavra' in ex}
+        baralho_map_debug = {card['palavra']: card for card in flashcards}
         playlist_debug = []
         try:
-            # Passa o gpt_map vazio, já que este é um quiz apenas ANKI
-            playlist_debug = selecionar_questoes_priorizadas(palavras_ativas_debug, baralho_map_debug, gpt_map_debug, 10, "Random")
+            todos_exercicios_map = {ex['palavra']: ex for ex in gpt_exercicios}
+            playlist_debug = selecionar_questoes_priorizadas(palavras_ativas_debug, baralho_map_debug, todos_exercicios_map, 10)
             st.write(f"Questões geradas para a playlist de depuração: `{len(playlist_debug)}`")
             with st.expander("Ver dados da playlist gerada"):
                 st.json(playlist_debug)
@@ -73,17 +74,17 @@ def quiz_ui(language, debug_mode):
         st.divider()
 
     # --- Lógica Principal do Quiz ---
-    palavras_ativas = db_df[db_df['ativo'] == True]
+    palavras_ativas = db_df[db_df['ativa'] == True]
     
     if palavras_ativas.empty:
         st.warning(get_text("no_active_words", language))
         return
 
-    baralho_map = {card['palavra']: card for card in flashcards if 'palavra' in card}
+    baralho_map = {card['palavra']: card for card in flashcards}
     gpt_map = defaultdict(list)
     for ex in gpt_exercicios:
         if ex.get('palavra'):
-            gpt_map[ex['palavra']].append(ex)
+             gpt_map[ex['palavra']].append(ex)
 
     tipos_legenda = {
         "MCQ Significado": get_text("word_meaning_anki", language),
@@ -109,8 +110,9 @@ def quiz_ui(language, debug_mode):
             if st.form_submit_button(get_text("start_quiz", language)):
                 tipo_escolhido_interno = {v: k for k, v in tipos_legenda.items()}.get(tipo_escolhido_leg, "Random")
                 playlist = selecionar_questoes_priorizadas(palavras_ativas, baralho_map, gpt_map, N, tipo_escolhido_interno)
+                
                 if not playlist:
-                     st.error(get_text("no_valid_questions", language))
+                    st.error(get_text("no_valid_questions", language))
                 else:
                     st.session_state.quiz_anki = {'started': True, 'idx': 0, 'total': len(playlist), 'playlist': playlist, 'resultados_formatados': []}
                     st.rerun()
@@ -126,7 +128,7 @@ def quiz_ui(language, debug_mode):
         if idx < total:
             if f"quiz_anki_pergunta_{idx}" not in st.session_state:
                 item = quiz['playlist'][idx]
-                tipo, pergunta, opts, ans_idx, cefr_level, id_ex = gerar_questao_dinamica(item, flashcards, gpt_exercicios, db_df)
+                tipo, pergunta, opts, ans_idx, cefr_level, id_ex = gerar_questao_dinamica(item, baralho_map, gpt_map, db_df)
                 st.session_state[f"quiz_anki_tipo_{idx}"] = tipo
                 st.session_state[f"quiz_anki_pergunta_{idx}"] = pergunta
                 st.session_state[f"quiz_anki_opts_{idx}"] = opts

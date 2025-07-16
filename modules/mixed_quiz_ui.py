@@ -16,13 +16,13 @@ from core.localization import get_text
 
 def mixed_quiz_ui(language, debug_mode):
     """
-    Renderiza a página do Quiz Misto, com tratamento de erros para novos utilizadores.
+    Renders the Mixed Quiz page, now loading its own data.
     """
-    # --- Carregamento de Dados ---
+    # --- STEP 1: Load necessary data ---
     flashcards, gpt_exercicios = carregar_arquivos_base(language)
     db_df = get_session_db(language)
 
-    # --- Botão de Voltar ---
+    # --- Back Button ---
     if st.button(get_text("back_to_dashboard", language), key="back_from_mixed"):
         st.session_state.current_page = "Homepage"
         st.session_state.pop('mixed_quiz', None)
@@ -30,24 +30,23 @@ def mixed_quiz_ui(language, debug_mode):
 
     st.header(get_text("mixed_quiz_button", language))
 
-    # --- CORREÇÃO DEFINITIVA PARA KEYERROR ---
+    # --- Data Integrity Check ---
     if db_df.empty or 'ativo' not in db_df.columns:
-        st.warning("A sua base de vocabulário está a ser sincronizada. Por favor, ative algumas palavras na página 'Estatísticas & Gerenciador' para começar.")
+        st.warning("Vocabulary data is not available. Please go to 'Stats & Manager' to sync your data.")
         return
 
-    # --- Lógica Principal ---
+    # --- Main Logic ---
     gpt_exercicios_filtrados = [ex for ex in gpt_exercicios if 'cloze_text' not in ex]
     palavras_ativas = db_df[db_df['ativo'] == True]
+
+    flashcards_map = {card['palavra']: card for card in flashcards}
+    gpt_exercicios_map = defaultdict(list)
+    for ex in gpt_exercicios_filtrados:
+        gpt_exercicios_map[ex['palavra']].append(ex)
 
     if palavras_ativas.empty:
         st.warning(get_text("no_active_words", language))
         return
-
-    flashcards_map = {card['palavra']: card for card in flashcards if 'palavra' in card}
-    gpt_exercicios_map = defaultdict(list)
-    for ex in gpt_exercicios_filtrados:
-        if ex.get('palavra'):
-            gpt_exercicios_map[ex['palavra']].append(ex)
 
     if 'mixed_quiz' not in st.session_state:
         st.session_state.mixed_quiz = {}
@@ -64,7 +63,7 @@ def mixed_quiz_ui(language, debug_mode):
                 else:
                     st.session_state.mixed_quiz = {
                         'started': True, 'playlist': playlist, 'idx': 0,
-                        'resultados_formatados': [], 'mostrar_resposta': False
+                        'resultados': [], 'mostrar_resposta': False
                     }
                     st.rerun()
     else:

@@ -1,9 +1,10 @@
+# core/quiz_logic.py
+
 import random
 from collections import defaultdict
-import re
-import pandas as pd
 from core.data_manager import TIPOS_EXERCICIO_ANKI
 
+# --- FUNCTION MOVED HERE ---
 def get_available_exercise_types_for_word(palavra, flashcards_map, gpt_exercicios_map):
     """
     Verifica e retorna todos os tipos de exercícios disponíveis para uma única palavra.
@@ -18,28 +19,20 @@ def get_available_exercise_types_for_word(palavra, flashcards_map, gpt_exercicio
     # Verifica exercícios tipo GPT
     if palavra in gpt_exercicios_map:
         for exercicio_gpt in gpt_exercicios_map[palavra]:
-            # Assumindo que a chave 'tipo' identifica o exercício
-            tipo_exercicio_gpt = exercicio_gpt.get('tipo')
-            if tipo_exercicio_gpt:
-                exercicios_disponiveis[tipo_exercicio_gpt] = tipo_exercicio_gpt
+            for key in exercicio_gpt:
+                # Assumindo que as chaves dos exercícios são os identificadores
+                if key not in ['palavra', 'source', 'texto_cloze']:
+                     exercicios_disponiveis[key] = key # Usa a própria chave como tipo
 
     return exercicios_disponiveis
 
 
 def selecionar_questoes_priorizadas(palavras_df, flashcards_map, gpt_exercicios_map, num_questoes, tipo_exercicio="Random"):
     """Seleciona questões priorizando palavras com erros ou não testadas."""
-    
-    # --- CORREÇÃO DEFINITIVA PARA KEYERROR ---
-    if palavras_df.empty or 'ativo' not in palavras_df.columns:
-        return []
-
-    palavras_ativas = palavras_df[palavras_df['ativo']].copy()
-    
-    if palavras_ativas.empty:
-        return []
-
     playlist = []
     candidatos = []
+
+    palavras_ativas = palavras_df[palavras_df['ativa']].copy()
     
     for _, row in palavras_ativas.iterrows():
         palavra = row['palavra']
@@ -48,113 +41,96 @@ def selecionar_questoes_priorizadas(palavras_df, flashcards_map, gpt_exercicios_
         exercicios_disponiveis = get_available_exercise_types_for_word(palavra, flashcards_map, gpt_exercicios_map)
 
         for id_exercicio, tipo_gen in exercicios_disponiveis.items():
-            if tipo_exercicio == "Random" or tipo_gen == tipo_exercicio or id_exercicio == tipo_exercicio:
+            if tipo_exercicio == "Random" or tipo_gen == tipo_exercicio:
                 status = progresso.get(id_exercicio, 'nao_testado')
                 prioridade = {'erro': 0, 'nao_testado': 1, 'acerto': 2}.get(status, 2)
                 candidatos.append({'palavra': palavra, 'tipo_exercicio': tipo_gen, 'identificador': id_exercicio, 'prioridade': prioridade})
 
+    candidatos.sort(key=lambda x: x['prioridade'])
+    
     if not candidatos:
         return []
 
-    candidatos.sort(key=lambda x: x['prioridade'])
-    
-    num_a_selecionar = min(num_questoes, len(candidatos))
-    playlist = candidatos[:num_a_selecionar]
+    playlist = candidatos[:num_questoes]
     random.shuffle(playlist)
     
     return playlist
 
 
-def gerar_questao_dinamica(item_playlist, flashcards, gpt_exercicios, db_completo):
-    """
-    Gera os detalhes de uma questão com alternativas erradas totalmente aleatórias.
-    """
+def gerar_questao_dinamica(item_playlist, flashcards_map, gpt_map, db_df):
+    """Gera uma pergunta e opções dinamicamente com base no tipo de exercício."""
     palavra = item_playlist['palavra']
-    tipo_exercicio = item_playlist['tipo_exercicio']
-    identificador = item_playlist.get('identificador')
-
-    flashcards_map = {card['palavra']: card for card in flashcards if 'palavra' in card}
+    tipo = item_playlist['tipo_exercicio']
+    id_ex = item_playlist['identificador']
     
-    # Lógica para ANKI
-    if tipo_exercicio in TIPOS_EXERCICIO_ANKI.values():
+    pergunta, opts, ans_idx, cefr = "", [], None, "N/A"
+    
+    # Dados da palavra
+    word_info = db_df[db_df['palavra'] == palavra].iloc[0]
+    cefr = word_info.get('cefr', 'N/A')
+
+    # Lógica para exercícios ANKI
+    if tipo in TIPOS_EXERCICIO_ANKI.values():
         card = flashcards_map.get(palavra)
-        if not card: return None, None, [], -1, None, None
+        if not card: return None, None, None, None, None, None
 
         # Gerar opções de distração
         outras_palavras = list(flashcards_map.keys())
-        if palavra in outras_palavras:
-            outras_palavras.remove(palavra)
+        outras_palavras.remove(palavra)
         distracoes = random.sample(outras_palavras, min(3, len(outras_palavras)))
         
-        resposta_correta = None
-        opcoes_distracao = []
-        
-        if tipo_exercicio == "gerar_mcq_significado":
+        if tipo == "gerar_mcq_significado":
             pergunta = f"Qual o significado de **{palavra}**?"
-            resposta_correta = card.get('significado')
-            opcoes_distracao = [flashcards_map[d].get('significado') for d in distracoes]
-        elif tipo_exercicio == "gerar_mcq_traducao_ingles":
+            opts = [card.get('definicao', '')] + [flashcards_map[d].get('definicao', '') for d in distracoes]
+        elif tipo == "gerar_mcq_traducao_ingles":
             pergunta = f"Qual a tradução de **{palavra}**?"
-            resposta_correta = card.get('tradução')
-            opcoes_distracao = [flashcards_map[d].get('tradução') for d in distracoes]
-        
-        if resposta_correta:
-            opts = [resposta_correta] + [opt for opt in opcoes_distracao if opt]
-            opts = list(dict.fromkeys(opts)) # Remove duplicados
-            random.shuffle(opts)
-            ans_idx = opts.index(resposta_correta)
-            cefr = card.get('cefr', 'N/A')
-            return tipo_exercicio, pergunta, opts, ans_idx, cefr, identificador
+            opts = [card.get('traducao', '')] + [flashcards_map[d].get('traducao', '') for d in distracoes]
+        # Adicione outras lógicas de geração ANKI aqui...
 
-    # Lógica para GPT
+    # Lógica para exercícios GPT
     else:
-        for ex in gpt_exercicios:
-            if ex.get('principal') == palavra and ex.get('tipo') == tipo_exercicio:
-                pergunta = ex['frase']
-                correta = ex['correta']
-                opcoes = ex['opcoes']
-                random.shuffle(opcoes)
-                if correta not in opcoes:
-                    if len(opcoes) > 0:
-                        opcoes[random.randint(0, len(opcoes)-1)] = correta
-                    else:
-                        opcoes.append(correta)
-                ans_idx = opcoes.index(correta)
-                cefr = ex.get('cefr_level', 'N/A')
-                return ex['tipo'], pergunta, opcoes, ans_idx, cefr, identificador
+        exercicios_da_palavra = gpt_map.get(palavra, [])
+        exercicio_especifico = next((ex.get(tipo) for ex in exercicios_da_palavra if tipo in ex), None)
 
-    return None, None, [], -1, None, None
+        if exercicio_especifico:
+            pergunta = exercicio_especifico.get('pergunta')
+            opts = exercicio_especifico.get('opcoes', [])
+            resposta_correta_str = exercicio_especifico.get('resposta')
+            if resposta_correta_str in opts:
+                ans_idx = opts.index(resposta_correta_str)
 
-def selecionar_questoes_gpt(palavras_ativas, gpt_exercicios_map, tipo_filtro, n_palavras, repetir):
-    """Cria uma lista de questões para o Quiz GPT com aleatoriedade melhorada."""
-    if palavras_ativas.empty: return []
+    if opts and ans_idx is not None:
+        random.shuffle(opts)
+        ans_idx = opts.index(pergunta) # Encontra o novo índice da resposta correta após embaralhar
 
-    exercicios_possiveis = []
-    palavras_ativas_set = set(palavras_ativas['palavra'].values)
+    return tipo, pergunta, opts, ans_idx, cefr, id_ex
+
+def selecionar_questoes_gpt(palavras_df, gpt_exercicios_map, tipo_exercicio, n_palavras, repetir_palavra):
+    """Seleciona questões especificamente do pool GPT."""
+    palavras_disponiveis = [p for p in gpt_exercicios_map if p in set(palavras_df['palavra'].values)]
+    if not palavras_disponiveis:
+        return []
+
+    palavras_selecionadas = random.sample(palavras_disponiveis, min(n_palavras, len(palavras_disponiveis)))
     
-    for palavra, exercicios in gpt_exercicios_map.items():
-        if palavra in palavras_ativas_set:
-            for ex in exercicios:
-                if tipo_filtro == "Random" or ex.get('tipo') == tipo_filtro:
-                    progresso_palavra = palavras_ativas[palavras_ativas['palavra'] == palavra].iloc[0].get('progresso', {})
-                    status = progresso_palavra.get(ex.get('frase'), 'nao_testado')
-                    prioridade = 0 if status != 'acerto' else 1
-                    exercicios_possiveis.append((prioridade, random.random(), ex))
-
-    exercicios_possiveis.sort()
-
     playlist = []
-    if not repetir:
-        palavras_unicas = list(set(ex['principal'] for _, _, ex in exercicios_possiveis))
-        random.shuffle(palavras_unicas)
-        palavras_selecionadas = palavras_unicas[:n_palavras]
+    for palavra in palavras_selecionadas:
+        exercicios_da_palavra = gpt_exercicios_map[palavra]
         
-        for palavra_sel in palavras_selecionadas:
-            questoes_da_palavra = [ex for _, _, ex in exercicios_possiveis if ex['principal'] == palavra_sel]
-            if questoes_da_palavra:
-                playlist.append(random.choice(questoes_da_palavra))
-    else:
-        playlist = [ex for _, _, ex in exercicios_possiveis[:n_palavras]]
-
+        exercicios_candidatos = []
+        for ex in exercicios_da_palavra:
+            if tipo_exercicio == "Random":
+                exercicios_candidatos.extend(ex.values())
+            elif ex.get('tipo') == tipo_exercicio:
+                exercicios_candidatos.append(ex)
+        
+        if not exercicios_candidatos:
+            continue
+            
+        if repetir_palavra:
+            playlist.extend(exercicios_candidatos)
+        else:
+            playlist.append(random.choice(exercicios_candidatos))
+            
     random.shuffle(playlist)
     return playlist
