@@ -6,9 +6,16 @@ import pandas as pd
 import datetime
 from collections import Counter, defaultdict
 import random
+import requests
 from firebase_admin import firestore
+from io import StringIO
 
 # --- Constantes ---
+GITHUB_USER = "ricmarquesart"
+GITHUB_REPO = "Quiz"
+BRANCH = "main"
+BASE_URL = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/{BRANCH}/data/"
+
 CARTOES_FILE_BASE = 'cartoes_validacao.txt'
 GPT_FILE_BASE = 'Dados_Manual_output_GPT.txt'
 CLOZE_FILE_BASE = 'Dados_Manual_Cloze_text.txt'
@@ -22,13 +29,11 @@ TIPOS_EXERCICIO_GPT = [
     "fill_in_the_blank_1", "fill_in_the_blank_2", "cloze_text"
 ]
 
-# --- Interação com Firestore ---
+# --- Interação com Firestore (Completo) ---
 def get_firestore_db():
-    """Retorna uma instância do cliente Firestore."""
     return firestore.client()
 
 def get_user_doc_ref(language):
-    """Obtém a referência do documento do usuário logado."""
     if 'user_info' not in st.session_state or not st.session_state.get('logged_in'):
         return None
     uid = st.session_state['user_info']['uid']
@@ -36,13 +41,11 @@ def get_user_doc_ref(language):
     return get_firestore_db().collection(collection_name).document(uid)
 
 def get_user_data(language):
-    """Carrega todos os dados de um usuário do Firestore."""
     doc_ref = get_user_doc_ref(language)
     if doc_ref:
         doc = doc_ref.get()
         if doc.exists:
             return doc.to_dict()
-    # Estrutura padrão para um novo usuário
     return {
         'vocab_database': [],
         'historico': {"quiz": [], "gpt_quiz": [], "mixed_quiz": [], "review_quiz": [], "focus_quiz": [], "cloze_quiz": []},
@@ -51,12 +54,11 @@ def get_user_data(language):
     }
 
 def save_user_data(data_dict, language):
-    """Salva um dicionário de dados completo para o usuário."""
     doc_ref = get_user_doc_ref(language)
     if doc_ref:
         doc_ref.set(data_dict)
 
-# --- Funções "Wrapper" de Dados (Completas e Restauradas) ---
+# --- Funções "Wrapper" de Dados (Completo e Restaurado) ---
 def get_vocab_db_list(language):
     return get_user_data(language).get('vocab_database', [])
 
@@ -142,27 +144,102 @@ def delete_sentence_log_entry(word_key, language):
 
 # --- Carregamento de Arquivos e Sincronização ---
 @st.cache_data
-def carregar_arquivos_base(_language):
-    # Lembre-se de implementar sua lógica de carregamento de arquivos .txt aqui
-    return [], []
+def carregar_arquivos_base(language):
+    """
+    Baixa o conteúdo do GitHub e DEPOIS filtra e processa para o idioma correto.
+    """
+    @st.cache_data
+    def baixar_conteudo(filename):
+        url = BASE_URL + filename
+        try:
+            response = requests.get(url)
+            response.raise_for_status()
+            return response.text
+        except requests.exceptions.RequestException as e:
+            st.error(f"Falha ao baixar '{filename}' do GitHub: {e}")
+            return None
+
+    def processar_e_filtrar_anki(content, lang):
+        flashcards_filtrados = []
+        if not content: return flashcards_filtrados
+        
+        lang_map = {'en': 'English', 'fr': 'Francais'}
+        target_lang_str = lang_map.get(lang)
+        if not target_lang_str: return flashcards_filtrados
+
+        blocos = re.split(r'\n\s*\n', content.strip())
+        for bloco in blocos:
+            if not bloco.strip(): continue
+            linhas = [linha.strip() for linha in bloco.strip().split('\n')]
+            header = linhas[0]
+
+            if target_lang_str not in header:
+                continue
+
+            card = {'source': 'ANKI', 'idioma': lang}
+            match = re.match(r"(.+?)\s*\((.+?)\s*\|\s*(.+?)\s*\|\s*(.+?)\):", header)
+            if match:
+                card['palavra'] = match.group(1).strip()
+                card['classe'] = match.group(2).strip()
+                card['cefr'] = match.group(3).strip()
+            else:
+                continue
+
+            for linha in linhas[1:]:
+                if ': ' in linha:
+                    linha_limpa = re.sub(r'\\s*', '', linha).strip()
+                    key, value = linha_limpa.split(': ', 1)
+                    key = key.replace('- ', '').strip().lower().replace(' ', '_')
+                    card[key] = value.strip()
+            
+            flashcards_filtrados.append(card)
+        return flashcards_filtrados
+
+    def processar_e_filtrar_gpt(content, lang):
+        exercicios_filtrados = []
+        if not content: return exercicios_filtrados
+        for linha in content.strip().split('\n'):
+            linha_limpa = re.sub(r'\\s*', '', linha).strip()
+            partes = linha_limpa.strip().split(';')
+            if not partes or len(partes) < 7 or partes[0] != lang:
+                continue
+            
+            try:
+                exercicio = {
+                    'idioma': partes[0], 'tipo': partes[1], 'frase': partes[2],
+                    'opcoes': [opt.strip() for opt in partes[3].split('|')],
+                    'correta': partes[4], 'principal': partes[5], 'cefr_level': partes[6],
+                    'source': 'GPT', 'palavra': partes[5]
+                }
+                exercicios_filtrados.append(exercicio)
+            except IndexError:
+                continue
+        return exercicios_filtrados
+    
+    conteudo_anki = baixar_conteudo(CARTOES_FILE_BASE)
+    conteudo_gpt = baixar_conteudo(GPT_FILE_BASE)
+    
+    flashcards = processar_e_filtrar_anki(conteudo_anki, language)
+    gpt_exercicios = processar_e_filtrar_gpt(conteudo_gpt, language)
+    
+    return flashcards, gpt_exercicios
+
 
 @st.cache_data
 def load_sentence_data(language):
-    data_path = 'data'
-    filepath = os.path.join(data_path, language, SENTENCE_WORDS_FILE)
+    url = BASE_URL + SENTENCE_WORDS_FILE
     words_data = {}
     try:
-        df = pd.read_csv(filepath, sep=';')
+        response = requests.get(url)
+        response.raise_for_status()
+        col_names = ['Palavra', 'Classe', 'Nível', 'Frase', 'idioma']
+        df = pd.read_csv(StringIO(response.text), sep=';', header=None, names=col_names, on_bad_lines='skip')
+        df = df[df['idioma'] == language]
         for _, row in df.iterrows():
             key = f"{row['Palavra']}_{row['Classe']}_{row['Nível']}"
-            words_data[key] = {
-                'palavra_base': row['Palavra'],
-                'Classe': row['Classe'],
-                'Nível': row['Nível'],
-                'Outra Frase': row['Frase']
-            }
-    except Exception:
-        pass # Falha silenciosamente se o arquivo não for encontrado
+            words_data[key] = { 'palavra_base': row['Palavra'], 'Classe': row['Classe'], 'Nível': row['Nível'], 'Outra Frase': row['Frase'] }
+    except Exception as e:
+        st.error(f"Erro ao ler arquivo de frases do GitHub: {e}")
     return words_data
 
 def sync_database(language):
@@ -183,26 +260,21 @@ def sync_database(language):
     if updated_list:
         save_vocab_db_list(updated_list, language)
     
-    expected_columns = [
-        'palavra', 'ativo', 'fonte', 'progresso', 'contagem_maestria', 
-        'data_adicao', 'escrita_completa', 'cefr'
-    ]
-    if not updated_list:
+    expected_columns = ['palavra', 'ativo', 'fonte', 'progresso', 'contagem_maestria', 'data_adicao', 'escrita_completa', 'cefr']
+    if not updated_list and not db_list:
         return pd.DataFrame(columns=expected_columns)
-    else:
-        df = pd.DataFrame(updated_list)
-        for col in expected_columns:
-            if col not in df.columns:
-                df[col] = None
-        return df
+    
+    df = pd.DataFrame(updated_list if updated_list else db_list)
+    for col in expected_columns:
+        if col not in df.columns:
+            df[col] = None
+    return df
 
 def get_session_db(language):
     session_key = f"db_df_{language}"
+    expected_columns = ['palavra', 'ativo', 'fonte', 'progresso', 'contagem_maestria', 'data_adicao', 'escrita_completa', 'cefr']
     if 'user_info' not in st.session_state:
-        return pd.DataFrame(columns=[
-            'palavra', 'ativo', 'fonte', 'progresso', 'contagem_maestria', 
-            'data_adicao', 'escrita_completa', 'cefr'
-        ])
+        return pd.DataFrame(columns=expected_columns)
     if session_key not in st.session_state:
         st.session_state[session_key] = sync_database(language)
     return st.session_state[session_key]
@@ -215,17 +287,14 @@ def save_vocab_db(df, language):
 def get_performance_summary(language):
     db_df = get_session_db(language)
     historico = get_history(language)
-
     summary = {
         'db_kpis': {'total': 0, 'ativas': 0, 'inativas': 0},
         'kpis': {'precisao': 'N/A', 'sessoes': 0}
     }
-
     if not db_df.empty and 'ativo' in db_df.columns:
         summary['db_kpis']['total'] = len(db_df)
         summary['db_kpis']['ativas'] = int(db_df['ativo'].sum())
         summary['db_kpis']['inativas'] = summary['db_kpis']['total'] - summary['db_kpis']['ativas']
-
     if historico:
         total_sessoes = sum(len(v) for v in historico.values())
         total_acertos = sum(s.get('acertos', 0) for v in historico.values() for s in v)
@@ -233,5 +302,4 @@ def get_performance_summary(language):
         if (total_acertos + total_erros) > 0:
             summary['kpis']['precisao'] = f"{total_acertos / (total_acertos + total_erros) * 100:.1f}%"
         summary['kpis']['sessoes'] = total_sessoes
-        
     return summary
