@@ -142,104 +142,45 @@ def delete_sentence_log_entry(word_key, language):
     save_user_data(full_data, language)
 
 
+from core.firebase_manager import get_collection_data
+
 # --- Carregamento de Arquivos e Sincronização ---
 @st.cache_data
-def carregar_arquivos_base(language):
-    """
-    Baixa o conteúdo do GitHub e DEPOIS filtra e processa para o idioma correto.
-    """
-    @st.cache_data
-    def baixar_conteudo(filename):
-        url = BASE_URL + filename
-        try:
-            response = requests.get(url)
-            response.raise_for_status()
-            return response.text
-        except requests.exceptions.RequestException as e:
-            st.error(f"Falha ao baixar '{filename}' do GitHub: {e}")
-            return None
-
-    def processar_e_filtrar_anki(content, lang):
-        flashcards_filtrados = []
-        if not content: return flashcards_filtrados
-        
-        lang_map = {'en': 'English', 'fr': 'Francais'}
-        target_lang_str = lang_map.get(lang)
-        if not target_lang_str: return flashcards_filtrados
-
-        blocos = re.split(r'\n\s*\n', content.strip())
-        for bloco in blocos:
-            if not bloco.strip(): continue
-            linhas = [linha.strip() for linha in bloco.strip().split('\n')]
-            header = linhas[0]
-
-            if target_lang_str not in header:
-                continue
-
-            card = {'source': 'ANKI', 'idioma': lang}
-            match = re.match(r"(.+?)\s*\((.+?)\s*\|\s*(.+?)\s*\|\s*(.+?)\):", header)
-            if match:
-                card['palavra'] = match.group(1).strip()
-                card['classe'] = match.group(2).strip()
-                card['cefr'] = match.group(3).strip()
-            else:
-                continue
-
-            for linha in linhas[1:]:
-                if ': ' in linha:
-                    linha_limpa = re.sub(r'\\s*', '', linha).strip()
-                    key, value = linha_limpa.split(': ', 1)
-                    key = key.replace('- ', '').strip().lower().replace(' ', '_')
-                    card[key] = value.strip()
-            
-            flashcards_filtrados.append(card)
-        return flashcards_filtrados
-
-    def processar_e_filtrar_gpt(content, lang):
-        exercicios_filtrados = []
-        if not content: return exercicios_filtrados
-        for linha in content.strip().split('\n'):
-            linha_limpa = re.sub(r'\\s*', '', linha).strip()
-            partes = linha_limpa.strip().split(';')
-            if not partes or len(partes) < 7 or partes[0] != lang:
-                continue
-            
-            try:
-                exercicio = {
-                    'idioma': partes[0], 'tipo': partes[1], 'frase': partes[2],
-                    'opcoes': [opt.strip() for opt in partes[3].split('|')],
-                    'correta': partes[4], 'principal': partes[5], 'cefr_level': partes[6],
-                    'source': 'GPT', 'palavra': partes[5]
-                }
-                exercicios_filtrados.append(exercicio)
-            except IndexError:
-                continue
-        return exercicios_filtrados
-    
-    conteudo_anki = baixar_conteudo(CARTOES_FILE_BASE)
-    conteudo_gpt = baixar_conteudo(GPT_FILE_BASE)
-    
-    flashcards = processar_e_filtrar_anki(conteudo_anki, language)
-    gpt_exercicios = processar_e_filtrar_gpt(conteudo_gpt, language)
-    
-    return flashcards, gpt_exercicios
-
+def carregar_arquivos_base(_language):
+    """Carrega os dados base do Firestore."""
+    cartoes = get_collection_data(CARTOES_FILE_BASE.replace('.txt', ''))
+    gpt_exercicios = get_collection_data(GPT_FILE_BASE.replace('.txt', ''))
+    return cartoes, gpt_exercicios
 
 @st.cache_data
 def load_sentence_data(language):
-    url = BASE_URL + SENTENCE_WORDS_FILE
+    """Carrega os dados de sentenças do Firestore e filtra por idioma."""
+    collection_name = SENTENCE_WORDS_FILE.replace('.txt', '')
+    all_sentence_docs = get_collection_data(collection_name)
+    
     words_data = {}
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        col_names = ['Palavra', 'Classe', 'Nível', 'Frase', 'idioma']
-        df = pd.read_csv(StringIO(response.text), sep=';', header=None, names=col_names, on_bad_lines='skip')
-        df = df[df['idioma'] == language]
-        for _, row in df.iterrows():
-            key = f"{row['Palavra']}_{row['Classe']}_{row['Nível']}"
-            words_data[key] = { 'palavra_base': row['Palavra'], 'Classe': row['Classe'], 'Nível': row['Nível'], 'Outra Frase': row['Frase'] }
-    except Exception as e:
-        st.error(f"Erro ao ler arquivo de frases do GitHub: {e}")
+    
+    # Mapeia o código de idioma ('en', 'fr') para o valor no campo 'Tipo de Nota'
+    language_map = {
+        'en': 'BASE English',
+        'fr': 'BASE French'
+    }
+    target_note_type = language_map.get(language)
+
+    if not target_note_type:
+        return {} # Retorna vazio se o idioma não for suportado
+
+    for doc in all_sentence_docs:
+        # O nome do campo no Firestore deve ser 'Tipo de Nota'
+        if doc.get('Tipo de Nota') == target_note_type:
+            key = f"{doc.get('Palavra')}_{doc.get('Classe')}_{doc.get('Nível')}"
+            words_data[key] = {
+                'palavra_base': doc.get('Palavra'),
+                'Classe': doc.get('Classe'),
+                'Nível': doc.get('Nível'),
+                'Outra Frase': doc.get('Frase')
+            }
+            
     return words_data
 
 def sync_database(language):
